@@ -795,6 +795,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     if cap_n > 0 {
         super::timeline_captions::interact(app, ui, seq, caption_area, &layout);
     }
+    crate::selection_drop::paint_flash(app, ui, seq, &layout);
     let _ = (visible, TICKS_PER_SECOND);
 }
 
@@ -3053,13 +3054,18 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
     });
 
     // ---- drops: project items and effects
-    if let Some(item) = crate::panels::dragged_project_item(ui)
+    if let Some(item) = crate::panels::dragged_timeline_item(ui)
         && let Some(p) = ctx.pointer_hover_pos()
         && layout.content.contains(p)
         && app.timeline_drop_target(ui.ctx(), p)
     {
         let source = crate::panels::dragged_source(ui);
         let row = layout.row_at(p.y).cloned().filter(|r| {
+            if let Some(snapshot) = source.and_then(|s| s.selection) {
+                if r.track != snapshot.video_track && r.track != snapshot.audio_track {
+                    return false;
+                }
+            }
             source.is_none_or(|s| match r.kind {
                 TrackKind::Video => s.video,
                 TrackKind::Audio => s.audio,
@@ -3075,10 +3081,14 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
         let new_track = if row.is_some() { None } else { new_track_at(seq, layout, p.y, app.ui.timeline.video_track_h, app.ui.timeline.audio_track_h) }.filter(
             |(kind, _)| {
                 let carries = app.session.project.item(item).is_some_and(|i| if *kind == TrackKind::Video { i.has_video() } else { i.has_audio() });
-                carries && source.is_none_or(|s| if *kind == TrackKind::Video { s.video } else { s.audio })
+                carries && source.is_none_or(|s| s.selection.is_none()) && source.is_none_or(|s| if *kind == TrackKind::Video { s.video } else { s.audio })
             },
         );
         let target = match (&row, new_track) {
+            (Some(_), _) if source.is_some_and(|s| s.selection.is_some()) => {
+                let snapshot = source.and_then(|s| s.selection).unwrap();
+                Some((json!(snapshot.video_track.0), json!(snapshot.audio_track.0)))
+            }
             (Some(row), _) => Some(match row.kind {
                 TrackKind::Video => (json!(row.track.0), json!(drop_audio_track(seq, row.track, row.index).map(|t| t.0))),
                 TrackKind::Audio => (json!(seq.video_tracks.get(row.index).or(seq.video_tracks.first()).map(|t| t.id.0)), json!(row.track.0)),
@@ -3099,7 +3109,14 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
             preview_params["video"] = json!(source.video);
             preview_params["audio"] = json!(source.audio);
         }
-        let plan = row.as_ref().map(|_| filmcraft_engine::commands::preview_placement(&app.session, &preview_params));
+        let plan = row.as_ref().map(|_| {
+            let params = if let Some(snapshot) = source.and_then(|s| s.selection) {
+                filmcraft_engine::selection_placement::parameters(&app.session, snapshot, &preview_params)?
+            } else {
+                preview_params.clone()
+            };
+            filmcraft_engine::commands::preview_placement(&app.session, &params)
+        });
         let valid = target.is_some() && plan.as_ref().is_none_or(|p| p.is_ok());
         if valid && let Some(band) = row.as_ref().map(|r| r.rect).or(new_track.map(|(_, band)| band)) {
             let resolved = plan.as_ref().and_then(|p| p.as_ref().ok());
@@ -3109,6 +3126,18 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
             let painter = ui.painter().with_clip_rect(layout.content);
             painter.rect_filled(r, 3.0, Color32::from_white_alpha(40));
             painter.rect_stroke(r, 3.0, Stroke::new(1.5, Color32::WHITE), StrokeKind::Inside);
+            if let Some(snapshot) = source.and_then(|s| s.selection) {
+                for partner in layout.rows.iter().filter(|other| {
+                    other.track != row.as_ref().unwrap().track
+                        && ((snapshot.video && other.track == snapshot.video_track) || (snapshot.audio && other.track == snapshot.audio_track))
+                }) {
+                    let ghost =
+                        Rect::from_min_max(pos2(layout.x_of(time), partner.rect.top() + 1.0), pos2(layout.x_of(time + duration), partner.rect.bottom() - 1.0));
+                    painter.rect_filled(ghost, 3.0, Color32::from_white_alpha(40));
+                    painter.rect_stroke(ghost, 3.0, Stroke::new(1.5, Color32::WHITE), StrokeKind::Inside);
+                    app.auto.add("timeline.selectionPartnerPreview", ghost.intersect(layout.content), "关联声画片段预览");
+                }
+            }
             let label = format!("{} {:.3}–{:.3}s · {:.3}s", crate::i18n::t("Sequence time"), time.seconds(), (time + duration).seconds(), duration.seconds());
             painter.text(r.left_top() + vec2(4.0, -2.0), Align2::LEFT_BOTTOM, &label, Tokens::ui(10.0), Color32::WHITE);
             app.auto.add("timeline.placementPreview", r.intersect(layout.content), &label);
@@ -3147,7 +3176,12 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                 params["video"] = json!(source.video);
                 params["audio"] = json!(source.audio);
             }
-            if let Err(e) = app.session.execute("timeline.place", params) {
+            let result = if let Some(snapshot) = source.and_then(|s| s.selection) {
+                crate::selection_drop::place(app, &ctx, snapshot, params)
+            } else {
+                app.session.execute("timeline.place", params).map(|_| ())
+            };
+            if let Err(e) = result {
                 app.ui.status = e.to_string();
             }
             crate::panels::clear_drag(ui);
