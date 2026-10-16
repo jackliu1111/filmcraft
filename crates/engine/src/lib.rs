@@ -46,6 +46,7 @@ pub mod project_panel;
 pub mod project_tools;
 pub mod proxies;
 pub mod recognition;
+mod recognition_recovery;
 pub mod relink;
 pub mod remix;
 pub mod scene_detect;

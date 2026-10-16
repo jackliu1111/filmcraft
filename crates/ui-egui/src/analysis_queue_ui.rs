@@ -4,7 +4,8 @@ use super::*;
 pub(super) struct Active {
     pub(super) id: u64,
     pub(super) attempt: u64,
-    incarnation: u64,
+    pub(super) incarnation: u64,
+    pub(super) validation: Option<(ItemId, String)>,
 }
 fn job(app: &FilmcraftApp, id: u64) -> Option<Value> {
     app.session.project.analysis_queue.iter().find(|t| t.id == id).and_then(|t| serde_json::to_value(t).ok())
@@ -17,6 +18,7 @@ fn execute(app: &mut FilmcraftApp, id: &str, p: Value) -> Result<Value, String> 
 }
 pub(super) fn label(status: &str) -> &str {
     match status {
+        "unanalyzed" => "未分析",
         "queued" => "排队中",
         "probing" => "读取音轨",
         "waiting_audio" => "等待试听与选轨",
@@ -30,6 +32,7 @@ pub(super) fn label(status: &str) -> &str {
     }
 }
 pub(super) fn refresh(app: &mut FilmcraftApp) {
+    association::refresh(app);
     app.apex_ai.queue = app.session.project.analysis_queue.iter().filter_map(|t| serde_json::to_value(t).ok()).collect();
     app.apex_ai.states = app
         .session
@@ -197,8 +200,22 @@ pub(super) fn poll(app: &mut FilmcraftApp, ctx: &egui::Context) {
         app.apex_ai.origin = None;
         app.apex_ai.selected_job = None;
         app.apex_ai.pending = None;
+        app.apex_ai.path.clear();
+        app.apex_ai.stage = "unanalyzed".into();
+        app.apex_ai.message = "未分析".into();
+        app.apex_ai.error = None;
+        app.apex_ai.progress = None;
+        app.apex_ai.cached = false;
         app.apex_ai.states.clear();
-        app.apex_ai.reference_item = app.session.project.assemblies.last().map(|a| a.source_item).filter(|id| app.session.project.item(*id).is_some());
+        app.apex_ai.reference_item = app
+            .session
+            .project
+            .assemblies
+            .last()
+            .map(|a| a.source_item)
+            .filter(|id| app.session.project.item(*id).is_some())
+            .or_else(|| app.session.project.recognition.keys().copied().find(|id| app.session.project.item(*id).is_some()))
+            .or_else(|| app.session.project.selection_ranges.keys().copied().find(|id| app.session.project.item(*id).is_some()));
         if let Some(MediaRef::File { path }) =
             app.apex_ai.reference_item.and_then(|id| app.session.project.item(id)).and_then(|i| i.as_media()).map(|m| &m.media)
         {
@@ -206,6 +223,10 @@ pub(super) fn poll(app: &mut FilmcraftApp, ctx: &egui::Context) {
         }
         app.apex_ai.generated = app.session.project.assemblies.last().and_then(|a| serde_json::to_value(a).ok());
         app.apex_ai.job_progress.clear();
+        association::restore(app);
+        if let Some(item) = app.apex_ai.reference_item {
+            load(app, item);
+        }
         app.apex_ai.incarnation = app.session.recognition_jobs.incarnation;
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(worker) = &mut app.apex_ai.worker {
@@ -265,11 +286,13 @@ pub(super) fn poll(app: &mut FilmcraftApp, ctx: &egui::Context) {
         }
         let current_active = app.apex_ai.active.as_ref().and_then(|a| job(app, a.id).map(|t| (a.incarnation, a.attempt, t)));
         if let Some(worker) = &mut app.apex_ai.worker {
-            if current_active.as_ref().is_none_or(|(inc, attempt, t)| {
-                *inc != app.session.recognition_jobs.incarnation
-                    || t["attempt"].as_u64() != Some(*attempt)
-                    || !matches!(t["status"].as_str(), Some("probing" | "running"))
-            }) {
+            if app.apex_ai.active.as_ref().is_none_or(|a| a.validation.is_none() || a.incarnation != app.session.recognition_jobs.incarnation)
+                && current_active.as_ref().is_none_or(|(inc, attempt, t)| {
+                    *inc != app.session.recognition_jobs.incarnation
+                        || t["attempt"].as_u64() != Some(*attempt)
+                        || !matches!(t["status"].as_str(), Some("probing" | "running"))
+                })
+            {
                 worker.cancel();
             }
             worker.tick_cancel();
@@ -284,6 +307,7 @@ pub(super) fn poll(app: &mut FilmcraftApp, ctx: &egui::Context) {
             }
         }
         for event in events {
+            let Some(event) = association::consume(app, event) else { continue };
             let Some(active) = app.apex_ai.active.as_ref() else {
                 continue;
             };
@@ -327,6 +351,9 @@ pub(super) fn poll(app: &mut FilmcraftApp, ctx: &egui::Context) {
                                 let _ = execute(app, "analysis.complete", json!({"job":id,"attempt":attempt,"result":result}));
                                 app.apex_ai.cached = cached;
                             }
+                            Ok(native::Outcome::Validation(_)) => {
+                                let _ = execute(app, "analysis.fail", json!({"job":id,"attempt":attempt,"error":"分析请求返回了错误的关联核对类型"}));
+                            }
                             Err(failure) => {
                                 let _ = execute(app, "analysis.fail", json!({"job":id,"attempt":attempt,"error":failure.message,"code":failure.code}));
                             }
@@ -351,7 +378,8 @@ pub(super) fn poll(app: &mut FilmcraftApp, ctx: &egui::Context) {
                                 let audio = if task["status"] == "running" { task["audio_stream"].as_u64() } else { None };
                                 match native::Worker::start(path, audio, ctx.clone()) {
                                     Ok(worker) => {
-                                        app.apex_ai.active = Some(Active { id, attempt, incarnation: app.session.recognition_jobs.incarnation });
+                                        app.apex_ai.active =
+                                            Some(Active { id, attempt, incarnation: app.session.recognition_jobs.incarnation, validation: None });
                                         app.apex_ai.worker = Some(worker);
                                     }
                                     Err(message) => {
@@ -365,5 +393,7 @@ pub(super) fn poll(app: &mut FilmcraftApp, ctx: &egui::Context) {
             }
         }
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    association::poll(app, ctx);
     refresh(app);
 }

@@ -70,6 +70,97 @@ class BridgeEntryTests(unittest.TestCase):
         self.assertIn('controlled failure', json.loads(result.stdout)['message'])
 
 
+    def validation(self, broken=False, task_id=None, missing_result=False, malformed_result=False):
+        source = self.folder / 'source.mkv'
+        source.write_bytes(b'original')
+        (self.backend/'task-id').write_text(task_id or 'a'*32)
+        self.write_backend("""import json
+from pathlib import Path
+class Config:
+ def service_arguments(self): return {}
+def configuration(env, *, analyze): return Config()
+class ParentGuard:
+ def __init__(self,pid): pass
+ def __enter__(self): return self
+ def __exit__(self,*args): pass
+ def check(self): pass
+class ModelService:
+ def __init__(self,**kwargs):
+  self.read_only=False
+  self.results_dir=Path(__file__).resolve().parents[2]/'results'
+  self.tasks_dir=self.results_dir.parent/'tasks'
+  self.tasks_dir.mkdir(exist_ok=True)
+  (self.tasks_dir/((self.results_dir.parent/'task-id').read_text()+'.json')).write_text('{}')
+ def execute(self,op,p):
+  if op=='get_task':
+   if p['task_id']!=(self.results_dir.parent/'task-id').read_text():
+    e=ValueError('task absent');e.code='task_not_found';raise e
+   return {'kind':'analysis','status':'completed','results':[{'status':'completed','result_id':'a'*32,'media_id':'m'}]}
+  if op=='get_result': return json.loads((self.results_dir/('a'*32)/'result.json').read_text())
+  assert op=='read_scores', 'read-only validation must never submit inference'
+  return {'prediction_id':'a'*32,'classes':['Gunshot, gunfire','Machine gun'],
+   'frame_onsets_s':[0.], 'frame_offsets_s':[1.], 'scores':[[0.,0.]], 'next_start_s':None}
+ def validate_result(self,r): pass
+ def close(self,**kwargs): pass
+""")
+        folder = self.backend/'results'/('a'*32)
+        folder.mkdir(parents=True)
+        record = {'result_id':'a'*32,'prediction_id':'a'*32,
+                  'media':{'source':{'path':str(source)},'media_id':'m','duration_s':1.,'selected_audio':{'stream_index':2}},
+                  'prediction':{'configuration':{},'scores_path':str(folder/'scores.npz'),'metadata_path':str(folder/'prediction.json')},
+                  'events':[],'candidates':[]}
+        (folder/'result.json').write_text(json.dumps(record))
+        (folder/'prediction.json').write_text(json.dumps({'prediction_id':'a'*32,'media':record['media'],'configuration':{}}))
+        import zipfile
+        with zipfile.ZipFile(folder/'scores.npz','w') as archive:
+            for key in ('probabilities','class_names','frame_onsets','frame_offsets','window_counts'):
+                archive.writestr(key+'.npy',b'fixture controlled at public read_scores boundary')
+        if malformed_result:
+            record['media']=None
+            (folder/'result.json').write_text(json.dumps(record))
+        if missing_result:
+            (folder/'result.json').unlink()
+        if broken:
+            (folder/'scores.npz').write_bytes(b'broken NPZ')
+        env = dict(os.environ,APEX_SERVICE_ROOT=str(self.backend))
+        proc=subprocess.run([sys.executable,str(ENTRY),'validate','--input',str(source),'--audio-stream','2','--result-id','a'*32],
+                            cwd=self.cwd,env=env,text=True,capture_output=True,timeout=10)
+        return proc,[json.loads(line) for line in proc.stdout.splitlines()]
+
+    def test_malformed_saved_result_reports_an_explicit_association_problem(self):
+        proc,events=self.validation(malformed_result=True)
+        self.assertNotEqual(0,proc.returncode)
+        self.assertEqual('association_invalid',events[-1]['code'])
+        self.assertIn('关联',events[-1]['message'])
+
+    def test_missing_saved_result_reports_association_failure_without_fallback(self):
+        proc,events=self.validation(missing_result=True)
+        self.assertNotEqual(0,proc.returncode)
+        self.assertEqual('association_invalid',events[-1]['code'])
+        self.assertIn('关联',events[-1]['message'])
+        self.assertFalse(any(e['type'] in ('result','validation') for e in events))
+
+    def test_saved_prediction_from_completed_batch_uses_its_own_task_linkage(self):
+        proc,events=self.validation(task_id='b'*32)
+        self.assertEqual(0,proc.returncode,proc.stdout+proc.stderr)
+        self.assertEqual('a'*32,events[-1]['prediction_id'])
+
+    def test_corrupt_saved_scores_report_failure_without_silent_reanalysis(self):
+        proc,events=self.validation(broken=True)
+        self.assertNotEqual(0,proc.returncode)
+        self.assertEqual('error',events[-1]['type'])
+        self.assertEqual('association_invalid',events[-1]['code'])
+        self.assertFalse(any(e['type'] in ('result','validation') for e in events))
+
+    def test_validate_saved_association_is_read_only_and_identifies_exact_prediction(self):
+        proc,events=self.validation()
+        self.assertEqual(0,proc.returncode,proc.stdout+proc.stderr)
+        self.assertEqual('validation',events[-1]['type'])
+        self.assertEqual('valid',events[-1]['status'])
+        self.assertEqual('a'*32,events[-1]['result_id'])
+        self.assertFalse(any(e['type']=='result' for e in events))
+
+
 class CategorizedAnalysisTests(BridgeEntryTests):
     """Exercise NDJSON, with the shared service's documented score operations."""
     def analysis(self, classes=None, frames=None, onsets=None, offsets=None, error=None):

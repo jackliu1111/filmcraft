@@ -8,6 +8,8 @@ use serde_json::{Value, json};
 
 use crate::FilmcraftApp;
 
+#[path = "association_ui.rs"]
+mod association;
 #[path = "analysis_queue_ui.rs"]
 mod queue;
 
@@ -19,6 +21,8 @@ pub struct State {
     pub gunshot_collapsed: bool,
     pub voice_collapsed: bool,
     pub states: std::collections::BTreeMap<ItemId, String>,
+    pub recovery: std::collections::BTreeMap<ItemId, Value>,
+    validation_pending: std::collections::VecDeque<ItemId>,
     incarnation: u64,
     selected_job: Option<u64>,
     active: Option<queue::Active>,
@@ -66,7 +70,7 @@ impl State {
 
     pub fn snapshot(&self) -> Value {
         json!({
-            "open": self.open, "busy": self.busy(), "path": self.path,"queue":self.queue,"selectedJob":self.selected_job,"activeJob":self.active.as_ref().map(|a|a.id),"activeAttempt":self.active.as_ref().map(|a|a.attempt),
+            "open": self.open, "busy": self.busy(), "path": self.path,"queue":self.queue,"selectedJob":self.selected_job,"activeJob":self.active.as_ref().filter(|a|a.validation.is_none()).map(|a|a.id),"activeAttempt":self.active.as_ref().filter(|a|a.validation.is_none()).map(|a|a.attempt),
             "sourceItem":self.reference_item.map(|i|i.0),"sources":self.states.iter().map(|(id,status)|json!({"item":id.0,"status":status})).collect::<Vec<_>>(),
             "audioStream": self.audio_stream, "auditionedStreams":self.auditioned, "media": self.media,
             "stage": self.stage, "message": self.message, "progress": self.progress,
@@ -74,6 +78,8 @@ impl State {
             "resultId": self.pending.as_ref().and_then(|r| r.get("result_id")),
             "generated": self.generated,
             "includeVoice": self.include_voice,
+            "associations":self.recovery.iter().map(|(_,v)|v.clone()).collect::<Vec<_>>(),
+            "activeValidation":self.active.as_ref().and_then(|a|a.validation.as_ref().map(|(item,id)|json!({"item":item.0,"resultId":id}))),
         })
     }
 
@@ -157,6 +163,16 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: &Va
         "apexAi.analyze" => queue::request(app, params, true)?,
         "apexAi.cancel" => queue::cancel(app, params)?,
         "apexAi.retry" => queue::retry(app, params)?,
+        "apexAi.validate" => association::request(app, params)?,
+        "apexAi.cancelValidation" =>
+        {
+            #[cfg(not(target_arch = "wasm32"))]
+            if app.apex_ai.active.as_ref().is_some_and(|a| a.validation.is_some()) {
+                if let Some(worker) = &mut app.apex_ai.worker {
+                    worker.cancel();
+                }
+            }
+        }
         "apexAi.apply" => {
             if app.apex_ai.busy() {
                 return Err("请等待当前任务停止。".into());
@@ -272,6 +288,25 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
                 action = Some(("apexAi.analyze", json!({})));
             }
         });
+        if let Some(item) = app.apex_ai.reference_item {
+            if let Some(state) = app.apex_ai.recovery.get(&item).cloned() {
+                ui.separator();
+                ui.label(state["reason"].as_str().unwrap_or("分析关联待核对"));
+                ui.small("已保存的事件、人工范围与剪辑保留；只读核对不会重新分析。");
+                ui.horizontal(|ui| {
+                    let check = ui.button("核对已存分析");
+                    app.auto.add("apexAi.validate", check.rect, "只读核对已保存分析关联");
+                    if check.clicked() {
+                        action = Some(("apexAi.validate", json!({"item":item.0})));
+                    }
+                    let retry = ui.button("重新分析此原片");
+                    app.auto.add("apexAi.retryAssociation", retry.rect, "主动重新分析此原片，保留人工工作");
+                    if retry.clicked() {
+                        action = Some(("apexAi.retry", json!({"item":item.0})));
+                    }
+                });
+            }
+        }
         ui.separator();
         ui.label("分析队列 · 按导入顺序处理就绪项目，待选音轨不阻塞后续素材");
         for task in app.apex_ai.queue.clone() {
@@ -327,9 +362,14 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
                 }
             }
             let cancel = ui.button("取消当前运行任务");
-            app.auto.add("apexAi.cancel", cancel.rect, "取消 AI 任务");
+            let validation = app.apex_ai.active.as_ref().is_some_and(|a| a.validation.is_some());
+            app.auto.add(if validation { "apexAi.cancelValidation" } else { "apexAi.cancel" }, cancel.rect, "取消当前后台任务");
             if cancel.clicked() {
-                action = Some(("apexAi.cancel", json!({"job":app.apex_ai.active.as_ref().map(|a|a.id)})));
+                action = if validation {
+                    Some(("apexAi.cancelValidation", json!({})))
+                } else {
+                    Some(("apexAi.cancel", json!({"job":app.apex_ai.active.as_ref().map(|a|a.id)})))
+                };
             }
         }
         ui.label(&app.apex_ai.message);
@@ -419,6 +459,7 @@ mod native {
     const MAX_LINE: u64 = 8 * 1024 * 1024;
 
     pub enum Outcome {
+        Validation(Value),
         Media(Value),
         Result { result: Value, cached: bool },
     }
@@ -474,6 +515,12 @@ mod native {
 
     impl Worker {
         pub fn start(path: &str, audio: Option<u64>, ctx: egui::Context) -> Result<Self, String> {
+            Self::start_request(path, audio, None, ctx)
+        }
+        pub fn start_validation(path: &str, audio: u64, result_id: &str, ctx: egui::Context) -> Result<Self, String> {
+            Self::start_request(path, Some(audio), Some(result_id.to_string()), ctx)
+        }
+        fn start_request(path: &str, audio: Option<u64>, validation: Option<String>, ctx: egui::Context) -> Result<Self, String> {
             let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
             let primary = std::fs::read_to_string(root.join(".git"))
                 .ok()
@@ -492,7 +539,7 @@ mod native {
                 .name("apex-ai-bridge".into())
                 .spawn(move || {
                     let work = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        bridge_run(python, bridge, &path, audio, &worker_child, &worker_cancel, &sender, &ctx)
+                        bridge_run(python, bridge, &path, audio, validation.as_deref(), &worker_child, &worker_cancel, &sender, &ctx)
                     }));
                     let outcome = work.unwrap_or_else(|_| Err("AI 后台任务异常退出，当前项目未被替换。".into()));
                     terminate(&worker_child, true);
@@ -551,6 +598,7 @@ mod native {
         bridge: std::ffi::OsString,
         path: &str,
         audio: Option<u64>,
+        validation: Option<&str>,
         child: &Arc<Mutex<Option<Child>>>,
         cancel: &AtomicBool,
         sender: &SyncSender<Event>,
@@ -575,7 +623,19 @@ mod native {
                 command.env("APEX_AI_DATA_DIR", primary.join("outputs/apex-ai/model-data"));
             }
         }
-        command.arg(bridge).arg(if audio.is_some() { "analyze" } else { "probe" }).args(["--input", path]);
+        command
+            .arg(bridge)
+            .arg(if validation.is_some() {
+                "validate"
+            } else if audio.is_some() {
+                "analyze"
+            } else {
+                "probe"
+            })
+            .args(["--input", path]);
+        if let Some(id) = validation {
+            command.args(["--result-id", id]);
+        }
         command.args(["--parent-pid", &std::process::id().to_string()]);
         if let Some(audio) = audio {
             command.args(["--audio-stream", &audio.to_string()]);
@@ -614,6 +674,7 @@ mod native {
                     let _ = sender.try_send(Event::Progress { stage, message, progress });
                     ctx.request_repaint();
                 }
+                Some("validation") => outcome = Some(Outcome::Validation(event.clone())),
                 Some("media") => outcome = Some(Outcome::Media(event.get("media").cloned().ok_or("AI 探测结果缺少媒体。")?)),
                 Some("result") => {
                     outcome = Some(Outcome::Result {

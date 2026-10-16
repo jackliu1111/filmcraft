@@ -440,3 +440,194 @@ fn analysis_queue_removed_running_source_invalidates_its_token_without_blocking_
     std::fs::remove_file(path).unwrap();
     std::fs::remove_file(other).unwrap();
 }
+
+#[test]
+fn recovery_keeps_saved_work_and_visible_association_failure_until_explicit_recheck() {
+    let (mut s, path) = recording();
+    let token = s.execute("recognition.begin", json!({"item":5,"audioStream":1})).unwrap();
+    let raw = result(&path);
+    s.execute("recognition.attach", json!({"token":token["token"],"result":raw})).unwrap();
+    let range = s.execute("selection.inspect", json!({"item":5})).unwrap()["ranges"][0]["rangeId"].clone();
+    s.execute("selection.setRange", json!({"item":5,"rangeId":range,"start":Tick::from_seconds_f64(8.0).0,"duration":Tick::from_seconds_f64(7.0).0})).unwrap();
+    let selections = s.execute("selection.inspect", json!({"item":5})).unwrap()["ranges"].clone();
+    let sequence = s.execute("sequence.inspect", json!({})).unwrap();
+    let check = s.execute("recognition.recovery", json!({"item":5})).unwrap();
+    s.execute(
+        "recognition.validated",
+        json!({"item":5,"resultId":"test-result","projectToken":check["projectToken"],"error":"完整分数文件缺失","code":"association_invalid"}),
+    )
+    .unwrap();
+    let saved = format!("{path}.recovery.fcproj");
+    s.execute("file.saveAs", json!({"path":saved})).unwrap();
+    let mut reopen = Session::default();
+    reopen.execute("file.open", json!({"path":saved})).unwrap();
+    let warning = reopen.execute("recognition.recovery", json!({"item":5})).unwrap();
+    assert_eq!(warning["status"], "unavailable");
+    assert_eq!(warning["reason"], "完整分数文件缺失");
+    assert_eq!(reopen.execute("recognition.inspect", json!({"item":5})).unwrap()["result"], raw);
+    assert_eq!(reopen.execute("selection.inspect", json!({"item":5})).unwrap()["ranges"], selections);
+    assert_eq!(reopen.execute("sequence.inspect", json!({})).unwrap(), sequence);
+    assert!(reopen.execute("analysis.next", json!({})).unwrap().is_null());
+    assert!(
+        reopen.execute("recognition.validated", json!({"item":5,"resultId":"test-result","projectToken":check["projectToken"],"error":"迟到错误"})).is_err()
+    );
+    let valid = json!({"status":"valid","result_id":"test-result","prediction_id":"test-result","source":raw["media"]["source"],"audio_stream":1});
+    let restored =
+        reopen.execute("recognition.validated", json!({"item":5,"resultId":"test-result","projectToken":warning["projectToken"],"validation":valid})).unwrap();
+    assert_eq!(restored["status"], "valid");
+    assert_eq!(reopen.execute("selection.inspect", json!({"item":5})).unwrap()["ranges"], selections);
+    assert_eq!(reopen.execute("recognition.inspect", json!({"item":5})).unwrap()["result"], raw);
+    reopen.execute("file.save", json!({})).unwrap();
+    reopen.execute("file.open", json!({"path":saved})).unwrap();
+    assert_eq!(reopen.execute("recognition.recovery", json!({"item":5})).unwrap()["status"], "unchecked");
+    std::fs::remove_file(saved).unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn recovery_reports_source_changes_and_missing_association_without_erasing_saved_ranges() {
+    let (mut s, path) = recording();
+    let r = result(&path);
+    let token = s.execute("recognition.begin", json!({"item":5,"audioStream":1})).unwrap();
+    s.execute("recognition.attach", json!({"token":token["token"],"result":r})).unwrap();
+    let ranges = s.execute("selection.inspect", json!({"item":5})).unwrap()["ranges"].clone();
+    std::fs::write(&path, b"different original recording bytes").unwrap();
+    assert_eq!(s.execute("recognition.recovery", json!({"item":5})).unwrap()["code"], "source_changed");
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(s.execute("recognition.recovery", json!({"item":5})).unwrap()["status"], "source_offline");
+    assert_eq!(s.execute("recognition.inspect", json!({"item":5})).unwrap()["result"], r);
+    assert_eq!(s.execute("selection.inspect", json!({"item":5})).unwrap()["ranges"], ranges);
+}
+
+#[test]
+fn recovery_distinguishes_manual_only_work_from_a_missing_model_association() {
+    let (mut s, path) = recording();
+    s.execute("selection.addRange", json!({"item":5,"start":Tick::from_seconds_f64(30.0).0,"duration":Tick::from_seconds_f64(3.0).0})).unwrap();
+    assert_eq!(s.execute("recognition.recovery", json!({"item":5})).unwrap()["status"], "unanalyzed");
+    let raw = result(&path);
+    let token = s.execute("recognition.begin", json!({"item":5,"audioStream":1})).unwrap();
+    s.execute("recognition.attach", json!({"token":token["token"],"result":raw})).unwrap();
+    let ranges = s.execute("selection.inspect", json!({"item":5})).unwrap()["ranges"].clone();
+    let project_path = format!("{path}.missing-association.fcproj");
+    s.execute("file.saveAs", json!({"path":project_path})).unwrap();
+    // A user-visible project fixture containing saved range provenance but lost association JSON.
+    let mut fixture: Value = serde_json::from_slice(&std::fs::read(&project_path).unwrap()).unwrap();
+    fixture["project"]["recognition"] = json!({});
+    std::fs::write(&project_path, serde_json::to_vec(&fixture).unwrap()).unwrap();
+    let mut reopen = Session::default();
+    reopen.execute("file.open", json!({"path":project_path})).unwrap();
+    assert_eq!(reopen.execute("recognition.recovery", json!({"item":5})).unwrap()["status"], "missing");
+    assert_eq!(reopen.execute("selection.inspect", json!({"item":5})).unwrap()["ranges"], ranges);
+    assert!(reopen.execute("analysis.next", json!({})).unwrap().is_null());
+    std::fs::remove_file(project_path).unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn recovery_success_is_read_only_and_does_not_dirty_a_clean_reopened_project() {
+    let (mut s, path) = recording();
+    let raw = result(&path);
+    let token = s.execute("recognition.begin", json!({"item":5,"audioStream":1})).unwrap();
+    s.execute("recognition.attach", json!({"token":token["token"],"result":raw})).unwrap();
+    let saved = format!("{path}.readonly.fcproj");
+    s.execute("file.saveAs", json!({"path":saved})).unwrap();
+    let mut reopen = Session::default();
+    reopen.execute("file.open", json!({"path":saved})).unwrap();
+    let state = reopen.execute("recognition.recovery", json!({"item":5})).unwrap();
+    assert_eq!(state["status"], "unchecked");
+    let before = reopen.execute("project.inspect", json!({})).unwrap();
+    let event =
+        json!({"type":"validation","status":"valid","result_id":"test-result","prediction_id":"test-result","source":raw["media"]["source"],"audio_stream":1});
+    let status =
+        reopen.execute("recognition.validated", json!({"item":5,"resultId":"test-result","projectToken":state["projectToken"],"validation":event})).unwrap();
+    assert_eq!(status["status"], "valid");
+    assert_eq!(reopen.execute("project.inspect", json!({})).unwrap(), before);
+    assert_eq!(reopen.execute("recognition.inspect", json!({"item":5})).unwrap()["result"], raw);
+    std::fs::remove_file(saved).unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn recovery_two_projects_share_only_analysis_while_restoring_ranges_assemblies_audio_and_interrupted_queue() {
+    let (mut a, path) = recording();
+    a.edit("Two native audio streams", |p, _| {
+        let m = p.item_mut(ItemId(5)).unwrap().as_media_mut().unwrap();
+        m.info.audio_streams.push(m.info.audio_streams[0].clone());
+        m.info.video.as_mut().unwrap().frame_rate = filmcraft_time::FrameRate::new(24, 1);
+        Ok(())
+    })
+    .unwrap();
+    let mut raw = result(&path);
+    raw["media"]["audio_tracks"] = json!([
+        {"stream_index":1,"sample_rate":48000,"channels":2,"start_time_s":0.0},
+        {"stream_index":3,"sample_rate":48000,"channels":2,"start_time_s":0.0}]);
+    raw["media"]["selected_audio"] = json!({"stream_index":3,"video_origin_s":0.0,"audio_origin_s":0.0,"audio_to_video_offset_s":0.0});
+    let token = a.execute("recognition.begin", json!({"item":5,"audioStream":3,"media":raw["media"]})).unwrap();
+    a.execute("recognition.attach", json!({"token":token["token"],"result":raw})).unwrap();
+    let range = a.execute("selection.inspect", json!({"item":5})).unwrap()["ranges"][0]["rangeId"].clone();
+    a.execute("selection.setRange", json!({"item":5,"rangeId":range,"start":Tick::from_seconds_f64(8.0).0,"duration":Tick::from_seconds_f64(8.0).0})).unwrap();
+    a.execute("selection.addRange", json!({"item":5,"start":Tick::from_seconds_f64(40.0).0,"duration":Tick::from_seconds_f64(3.0).0})).unwrap();
+    let directory = format!("{path}.recovery-projects");
+    let assembled = a.execute("selection.assemble", json!({"item":5,"directory":directory})).unwrap();
+    a.execute("timeline.place",json!({"item":5,"track":"V1","audioTrack":"A1","sourceIn":Tick::from_seconds_f64(70.0).0,"duration":Tick::from_seconds_f64(2.0).0,"time":Tick::from_seconds_f64(11.0).0})).unwrap();
+    a.execute("timeline.setTrack", json!({"track":"A1","muted":true})).unwrap();
+    let queue = a.execute("analysis.enqueue", json!({"item":5})).unwrap();
+    a.execute("analysis.start", json!({"job":queue["id"],"attempt":1})).unwrap();
+    let seq = a.execute("sequence.inspect", json!({})).unwrap();
+    let ranges = a.execute("selection.inspect", json!({"item":5})).unwrap()["ranges"].clone();
+    let usage = a.execute("selection.usage", json!({"item":5,"rangeId":range})).unwrap();
+    a.execute("file.save", json!({})).unwrap();
+    let mut opened = Session::default();
+    opened.execute("file.open", json!({"path":assembled["editProject"]})).unwrap();
+    assert_eq!(opened.execute("selection.assembly", json!({})).unwrap()["role"], "editingCopy");
+    let reopened_seq = opened.execute("sequence.inspect", json!({})).unwrap();
+    for key in ["video", "audio", "editingTrack", "duration", "name", "id"] {
+        assert_eq!(reopened_seq[key], seq[key], "{key}");
+    }
+    assert_eq!(reopened_seq["video"][0]["items"].as_array().unwrap().len(), 3);
+    assert_eq!(reopened_seq["audio"].as_array().unwrap().len(), 2);
+    assert_eq!(reopened_seq["audio"][0]["items"][0]["audioStream"], 0);
+    assert_eq!(reopened_seq["audio"][1]["items"][0]["audioStream"], 1);
+    assert_eq!(opened.execute("selection.inspect", json!({"item":5})).unwrap()["ranges"], ranges);
+    assert_eq!(opened.execute("selection.usage", json!({"item":5,"rangeId":range})).unwrap(), usage);
+    assert_eq!(opened.execute("recognition.inspect", json!({"item":5})).unwrap()["audioStream"], 3);
+    assert_eq!(opened.execute("analysis.list", json!({})).unwrap()[0]["status"], "interrupted");
+    assert!(opened.execute("analysis.next", json!({})).unwrap().is_null());
+    assert_eq!(opened.execute("recognition.recovery", json!({"item":5})).unwrap()["status"], "unchecked");
+    let mut original = Session::default();
+    original.execute("file.open", json!({"path":assembled["originalProject"]})).unwrap();
+    assert_eq!(original.execute("selection.assembly", json!({})).unwrap()["role"], "original");
+    assert_eq!(original.execute("sequence.inspect", json!({})).unwrap()["duration"], Tick::from_seconds_f64(11.0).0);
+    assert_eq!(original.execute("sequence.inspect", json!({})).unwrap()["audio"][0]["muted"], false);
+    let mut b = Session::default();
+    b.execute("file.openDemoProject", json!({})).unwrap();
+    b.edit("Same source only", |p, _| {
+        let m = p.item_mut(ItemId(5)).unwrap().as_media_mut().unwrap();
+        m.media = filmcraft_project::MediaRef::File { path: path.clone() };
+        m.info.duration = Tick::from_seconds_f64(100.0);
+        m.info.audio_streams.push(m.info.audio_streams[0].clone());
+        m.info.video.as_mut().unwrap().frame_rate = filmcraft_time::FrameRate::new(24, 1);
+        Ok(())
+    })
+    .unwrap();
+    b.execute("file.newSequence", json!({"video":1,"audio":1})).unwrap();
+    let token = b.execute("recognition.begin", json!({"item":5,"audioStream":3,"media":raw["media"]})).unwrap();
+    b.execute("recognition.attach", json!({"token":token["token"],"result":raw})).unwrap();
+    assert_eq!(b.execute("selection.inspect", json!({"item":5})).unwrap()["ranges"].as_array().unwrap().len(), 1);
+    assert_eq!(b.execute("selection.inspect", json!({"item":5})).unwrap()["ranges"][0]["startSeconds"], 5.0);
+    assert_eq!(b.execute("sequence.inspect", json!({})).unwrap()["duration"], 0);
+    assert_eq!(b.execute("sequence.inspect", json!({})).unwrap()["audio"][0]["muted"], false);
+    assert!(b.execute("selection.assembly", json!({})).unwrap()["role"].is_null());
+    assert_eq!(b.execute("analysis.list", json!({})).unwrap(), json!([]));
+    let second = format!("{path}.separate.fcproj");
+    b.execute("file.saveAs", json!({"path":second})).unwrap();
+    b.execute("file.open", json!({"path":assembled["editProject"]})).unwrap();
+    assert_eq!(b.execute("selection.inspect", json!({"item":5})).unwrap()["ranges"], ranges);
+    let reopened_seq = b.execute("sequence.inspect", json!({})).unwrap();
+    for key in ["video", "audio", "editingTrack", "duration", "name", "id"] {
+        assert_eq!(reopened_seq[key], seq[key], "{key}");
+    }
+    std::fs::remove_file(second).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    std::fs::remove_file(path).unwrap();
+}
