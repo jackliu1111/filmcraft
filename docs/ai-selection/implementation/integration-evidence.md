@@ -54,7 +54,9 @@
 - 拖到节目监视器不提交；一次撤销／重做恢复整个插入及顺延。
 - 对既有三段序列实际点击中段并 Delete，得到 8+6 秒；拖首段右边缘缩短两秒，得到 6+6 秒；拖主体重排，来源顺序变为 30–36、8–14 秒，片段 ID 不变。连续三次撤销完整恢复声画内容。
 
-证据为 `24-26-native-evidence.json`、`24-manual-native.json`、`25-native-evidence.json`、`26-native-manual.fcproj` 和 `native-26-placement-preview.png`。自动化入口只提供完整的按下—移动—释放手势，尚未实测在未释放鼠标期间按 Escape；不能把无效落点或公共接口取消测试算作该鼠标取消验收。
+证据为 `24-26-native-evidence.json`、`24-manual-native.json`、`25-native-evidence.json`、`26-native-manual.fcproj` 和 `native-26-placement-preview.png`。
+
+在 `676903f9` 原生构建中补测未释放鼠标期间按 Escape：范围手柄、范围拖入、片段重排、片段裁边四种手势均在移动途中接收真实 egui 按键事件，随后继续移动并松手；持久范围、全部声画片段和撤销历史均不变。证据 `native-escape-evidence.json`。现有本地控制入口仅增加可选 `escapeAt` 移动步，用于完成此前无法插入按键的原生验收，不改变产品操作。
 
 组合回归：连续剪辑 14 项、范围相关 44 项、识别关联 8 项均通过；完整原生应用编译通过。
 
@@ -67,6 +69,14 @@
 保存 `27-native.fcproj` 后实际退出并重新启动应用：识别关联及音轨映射完全一致，目标轨声画内容相同，先前 75–77 秒人工补片恢复，未自动运行分析。
 
 证据为 `27-native-evidence.json`、`27-export-job.json`、`27-media-audit.json`、`27-reopen.json` 和 `native-default-27.mp4`。
+
+## #29 事件与真实双坐标预览
+
+在既有原生序列删除中段后，公开坐标查询返回成片 9 秒对应原片 31 秒；执行原生 Match Frame 后，源监视器实际定位原片 31 秒，节目仍为成片 9 秒，两侧画面一致，头部明确显示对应坐标。
+
+同一人声待剪范围两次加入的事件分别映射。另从普通源拖放入口加入原片 22–32 秒，实际映射全部四个覆盖事件，包含枪声和人声；跨末边界的人声仅覆盖至原片 32 秒。动态查询与界面事件元素逐项一致，没有生成独立人工标记。
+
+证据为 `29-native-evidence.json`、`29-native.fcproj`、`native-29-match-frame.png` 和 `native-29-event-mapping.png`。公共接口的裁边、重排、删除、重复、变速／反向／定格和重开重算由五项确定性回归覆盖，真实变速声音效果不在本次实测结论内。
 
 ## 仍需补齐的素材
 
