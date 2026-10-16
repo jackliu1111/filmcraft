@@ -134,3 +134,108 @@ fn recognition_preserves_overlapping_voice_events_policy_and_unavailable_status_
     std::fs::remove_file(project_path).unwrap();
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn multitrack_analysis_maps_container_indices_and_preserves_all_retained_streams_after_save_open() {
+    let (mut s, path) = recording();
+    s.edit("Second audio fixture", |p, _| {
+        let media = p.item_mut(ItemId(5)).unwrap().as_media_mut().unwrap();
+        let mut audio = media.info.audio_streams[0].clone();
+        audio.channels = 1;
+        audio.sample_rate = 16000;
+        media.info.audio_streams.push(audio);
+        Ok(())
+    })
+    .unwrap();
+    let mut r = result(&path);
+    r["media"]["audio_tracks"] = json!([
+        {"stream_index":2,"sample_rate":48000,"channels":2,"start_time_s":-0.021},
+        {"stream_index":4,"sample_rate":16000,"channels":1,"start_time_s":0.25}
+    ]);
+    r["media"]["selected_audio"] = json!({"stream_index":4,"video_origin_s":0.0,"audio_origin_s":0.25,"audio_to_video_offset_s":0.25});
+    let map = s.execute("recognition.mapAudio", json!({"item":5,"media":r["media"]})).unwrap();
+    assert_eq!(map["audioMapping"][1]["containerStream"], 4);
+    assert_eq!(map["audioMapping"][1]["nativeOrdinal"], 1);
+    let job = s.execute("recognition.begin", json!({"item":5,"audioStream":4,"media":r["media"]})).unwrap();
+    s.execute("recognition.attach", json!({"token":job["token"],"result":r})).unwrap();
+    let association = s.execute("recognition.inspect", json!({"item":5})).unwrap();
+    assert_eq!(association["analysisAudioOrdinal"], 1);
+    assert_eq!(association["audioStream"], 4);
+    s.execute("file.newSequence", json!({"name":"Retained audio","video":1,"audio":1})).unwrap();
+    s.execute("sequence.setEditingTrack", json!({"track":"V1","audioTrack":"A1"})).unwrap();
+    s.execute("timeline.place", json!({"item":5,"track":"V1","audioTrack":"A1","sourceIn":0,"duration":Tick::from_seconds_f64(2.0).0,"time":0})).unwrap();
+    let sequence = s.execute("sequence.inspect", json!({})).unwrap();
+    let streams: Vec<_> =
+        sequence["audio"].as_array().unwrap().iter().flat_map(|t| t["items"].as_array().unwrap()).map(|c| c["audioStream"].as_u64().unwrap()).collect();
+    assert_eq!(streams, vec![0, 1], "analysis choice must not discard other sounds");
+    let video = &sequence["video"][0]["items"][0];
+    for track in sequence["audio"].as_array().unwrap() {
+        for clip in track["items"].as_array().unwrap() {
+            assert_eq!(clip["link"], video["link"]);
+            assert_eq!(clip["sourceIn"], video["sourceIn"]);
+            assert_eq!(clip["duration"], video["duration"]);
+            assert_eq!(clip["start"], video["start"]);
+        }
+    }
+    let saved = format!("{path}.multitrack.fcproj");
+    s.execute("file.saveAs", json!({"path":saved})).unwrap();
+    let mut reopened = Session::default();
+    reopened.execute("file.open", json!({"path":saved})).unwrap();
+    assert_eq!(reopened.execute("recognition.inspect", json!({"item":5})).unwrap(), association);
+    assert_eq!(reopened.execute("sequence.inspect", json!({})).unwrap()["audio"], sequence["audio"]);
+    std::fs::remove_file(saved).unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn multitrack_analysis_rejects_ambiguous_mapping_wrong_selection_and_unsupported_origins_without_mutation() {
+    let (mut s, path) = recording();
+    s.edit("Two audio streams", |p, _| {
+        let media = p.item_mut(ItemId(5)).unwrap().as_media_mut().unwrap();
+        media.info.audio_streams.push(media.info.audio_streams[0].clone());
+        Ok(())
+    })
+    .unwrap();
+    let mut r = result(&path);
+    r["media"]["audio_tracks"] = json!([
+        {"stream_index":1,"sample_rate":48000,"channels":2,"start_time_s":-0.021},
+        {"stream_index":3,"sample_rate":48000,"channels":2,"start_time_s":0.125}
+    ]);
+    r["media"]["selected_audio"] = json!({"stream_index":3,"video_origin_s":0.0,"audio_origin_s":0.125,"audio_to_video_offset_s":0.125});
+    let before = s.execute("project.inspect", json!({})).unwrap();
+    assert!(s.execute("recognition.begin", json!({"item":5,"audioStream":3})).is_err());
+    for invalid_media in [
+        {
+            let mut media = r["media"].clone();
+            media["audio_tracks"][1]["stream_index"] = json!(1);
+            media
+        },
+        {
+            let mut media = r["media"].clone();
+            media["audio_tracks"][1]["sample_rate"] = json!(16000);
+            media
+        },
+        {
+            let mut media = r["media"].clone();
+            media["audio_tracks"][0]["start_time_s"] = Value::Null;
+            media
+        },
+        {
+            let mut media = r["media"].clone();
+            media["video"]["start_time_s"] = json!(1.0);
+            media
+        },
+    ] {
+        assert!(s.execute("recognition.mapAudio", json!({"item":5,"media":invalid_media})).is_err());
+    }
+    let job = s.execute("recognition.begin", json!({"item":5,"audioStream":3,"media":r["media"]})).unwrap();
+    let mut wrong_track = r.clone();
+    wrong_track["media"]["selected_audio"]["stream_index"] = json!(1);
+    assert!(s.execute("recognition.attach", json!({"token":job["token"],"result":wrong_track})).is_err());
+    let mut wrong_offset = r.clone();
+    wrong_offset["media"]["selected_audio"]["audio_to_video_offset_s"] = json!(0.0);
+    assert!(s.execute("recognition.attach", json!({"token":job["token"],"result":wrong_offset})).is_err());
+    assert_eq!(s.execute("project.inspect", json!({})).unwrap(), before);
+    assert_eq!(s.execute("recognition.inspect", json!({"item":5})).unwrap(), Value::Null);
+    std::fs::remove_file(path).unwrap();
+}
