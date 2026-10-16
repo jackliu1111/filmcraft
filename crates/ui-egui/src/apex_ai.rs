@@ -17,6 +17,8 @@ pub struct State {
     pub open: bool,
     pub reference_item: Option<ItemId>,
     pub collapsed: bool,
+    pub gunshot_collapsed: bool,
+    pub voice_collapsed: bool,
     pub states: std::collections::BTreeMap<ItemId, String>,
     incarnation: u64,
     auto_analyze: bool,
