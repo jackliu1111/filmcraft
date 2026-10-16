@@ -1,0 +1,29 @@
+//! Project-local clip selection ranges; model event times remain immutable evidence.
+use filmcraft_time::{Tick, TimeRange};
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectionRange {
+    pub range_id: String,
+    pub category: String,
+    #[serde(default)]
+    pub event_ids: Vec<String>,
+    #[serde(default)]
+    pub result_id: Option<String>,
+    pub start: Tick,
+    pub duration: Tick,
+    #[serde(default)]
+    pub revision: u64,
+    /// A user-drawn range has no invented model event.
+    #[serde(default)]
+    pub manual: bool,
+    /// Boundary edits survive refreshed analysis.
+    #[serde(default)]
+    pub modified: bool,
+}
+impl SelectionRange {
+    pub fn range(&self) -> TimeRange {
+        TimeRange::new(self.start, self.duration)
+    }
+}

@@ -247,6 +247,7 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
         .unwrap_or(Value::Null);
     let record = json!({"status":"completed", "audioStream":origin.audio, "analysisAudioOrdinal":ordinal,"audioMapping":mapping["audioMapping"], "sourcePath":origin.path, "result":result});
     s.edit("关联声音识别结果", |pr, _| {
+        crate::selection::initialize(pr, origin.item, result)?;
         pr.recognition.insert(origin.item, Arc::new(record.clone()));
         Ok(())
     })?;
