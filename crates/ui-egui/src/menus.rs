@@ -22,6 +22,14 @@ macro_rules! uic {
 }
 
 pub const UI_COMMANDS: &[UiCommand] = &[
+    uic!("apexAi.open", "声音识别…", ["Clip"], None),
+    uic!("apexAi.close", "收起声音识别", [], None),
+    uic!("apexAi.probe", "读取录像音轨", [], None),
+    uic!("apexAi.analyze", "分析枪声", [], None),
+    uic!("apexAi.cancel", "取消分析", [], None),
+    uic!("apexAi.apply", "按当前范围组稿", [], None),
+    uic!("apexAi.state", "分析状态", [], None),
+    uic!("apexAi.inspect", "查看分析状态", [], None),
     uic!("window.dockAction", "Docking Action", [], None),
     uic!("window.dockPanel", "Dock Panel", [], None),
     uic!("window.floatPanel", "Undock Panel", [], None),
@@ -178,6 +186,9 @@ pub fn targets_source(app: &FilmcraftApp, params: &Value) -> bool {
 
 /// Execute a UI or engine command by id.
 pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params: Value) -> Result<Value, String> {
+    if id.starts_with("apexAi.") {
+        return crate::apex_ai::invoke(app, ctx, id, &params);
+    }
     if id == "edit.selectAll" && (crate::panels::graphics::select_all_edited_text(app) || crate::panels::effect_controls::select_all_keyframes(app)) {
         return Ok(Value::Null);
     }

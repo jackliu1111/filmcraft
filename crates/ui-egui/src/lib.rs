@@ -29,6 +29,7 @@ macro_rules! tlf {
     };
 }
 
+pub mod apex_ai;
 pub mod automation;
 pub mod brand;
 pub mod calc;
@@ -55,6 +56,7 @@ mod rtl;
 pub mod scrub;
 mod shuttle;
 pub mod source_playback;
+pub mod source_recognition;
 pub mod state;
 pub mod theme;
 mod theme_favorites;
@@ -272,6 +274,7 @@ pub(crate) const EXPORT_SAVE_DIALOGS: [(&str, &str, &str); 7] = [
 ];
 
 pub struct FilmcraftApp {
+    pub apex_ai: apex_ai::State,
     pub session: Session,
     pub ui: UiState,
     pub tokens: Tokens,
@@ -538,6 +541,7 @@ impl FilmcraftApp {
             session.prefs_path.as_ref().and_then(|p| p.parent()).map(|d| dock::WorkspacePrefs::load(&d.join(dock::WORKSPACES_FILE))).unwrap_or_default();
         let language = i18n::Language::parse(&session.prefs.general.interface_language).unwrap_or_default();
         Self {
+            apex_ai: Default::default(),
             session,
             ui: UiState { language, ..UiState::default() },
             tokens: Tokens::for_kind(ThemeKind::Dark),
@@ -1723,6 +1727,7 @@ impl FilmcraftApp {
         panels::metadata::follow_selection(self);
         self.frames.set_context(&ctx);
         self.session.poll_persistence();
+        apex_ai::poll(self, &ctx);
         panels::trim_monitor::advance(self, &ctx);
         if self.session.persistence.is_some() && self.session.is_dirty() {
             // Keep polling the auto-save worker (status, "also save the project" results).
@@ -1792,6 +1797,7 @@ impl FilmcraftApp {
         // the Timeline has had its chance to place a file drop this frame; anything left stays a bin import
         self.pending_timeline_drop = None;
         panels::dialogs::show(self, &ctx);
+        apex_ai::show(self, &ctx);
         if !self.ui.show_status_bar {
             // no bar to draw the job in, but a finished preview render still plays
             self.watch_jobs(ui.ctx());
@@ -2093,6 +2099,7 @@ impl eframe::App for FilmcraftApp {
     }
 
     fn on_exit(&mut self) {
+        self.apex_ai.shutdown();
         // Flush the recovery journal and stop the auto-save worker; a session with nothing unsaved
         // removes its journal, one with unsaved changes keeps it for the next launch.
         self.session.shutdown();

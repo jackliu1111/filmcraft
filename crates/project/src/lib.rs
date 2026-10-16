@@ -1241,6 +1241,9 @@ pub struct Project {
     /// are media time. Shared (`Arc`) so undo snapshots don't copy them.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub transcripts: BTreeMap<ItemId, std::sync::Arc<Transcript>>,
+    /// Source-time analysis evidence. Display metadata, never renderable clips.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub recognition: BTreeMap<ItemId, std::sync::Arc<serde_json::Value>>,
     /// Search bins (File ▸ New ▸ Search Bin): saved Find queries listed in the Project panel.
     /// Schema v11.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1349,6 +1352,7 @@ impl Project {
             next_id: 1,
             luts: Vec::new(),
             transcripts: BTreeMap::new(),
+            recognition: BTreeMap::new(),
             search_bins: Vec::new(),
             source_graphics: BTreeMap::new(),
             narrations: BTreeMap::new(),
