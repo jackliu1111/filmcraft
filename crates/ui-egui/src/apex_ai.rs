@@ -8,6 +8,9 @@ use serde_json::{Value, json};
 
 use crate::FilmcraftApp;
 
+#[path = "analysis_queue_ui.rs"]
+mod queue;
+
 #[derive(Default)]
 pub struct State {
     pub open: bool,
@@ -17,8 +20,10 @@ pub struct State {
     pub voice_collapsed: bool,
     pub states: std::collections::BTreeMap<ItemId, String>,
     incarnation: u64,
-    auto_analyze: bool,
-    token: Option<Value>,
+    selected_job: Option<u64>,
+    active: Option<queue::Active>,
+    queue: Vec<Value>,
+    job_progress: std::collections::BTreeMap<u64, (String, Option<f32>)>,
     path: String,
     media: Option<Value>,
     audio_stream: Option<u64>,
@@ -61,7 +66,7 @@ impl State {
 
     pub fn snapshot(&self) -> Value {
         json!({
-            "open": self.open, "busy": self.busy(), "path": self.path,
+            "open": self.open, "busy": self.busy(), "path": self.path,"queue":self.queue,"selectedJob":self.selected_job,"activeJob":self.active.as_ref().map(|a|a.id),"activeAttempt":self.active.as_ref().map(|a|a.attempt),
             "sourceItem":self.reference_item.map(|i|i.0),"sources":self.states.iter().map(|(id,status)|json!({"item":id.0,"status":status})).collect::<Vec<_>>(),
             "audioStream": self.audio_stream, "auditionedStreams":self.auditioned, "media": self.media,
             "stage": self.stage, "message": self.message, "progress": self.progress,
@@ -96,11 +101,13 @@ fn tracks(media: &Value) -> &[Value] {
 
 fn source_for_path(app: &FilmcraftApp, path: &str) -> Option<ItemId> {
     app.apex_ai.origin.as_ref().filter(|o| o.matches(&app.session)).map(|o| o.item).into_iter().chain(app.session.project.items.keys().copied()).find(|id| {
-        app.session
-            .project
-            .item(*id)
-            .and_then(|i| i.as_media())
-            .is_some_and(|m| matches!(&m.media,MediaRef::File {path:p} if std::fs::canonicalize(p).ok() == std::fs::canonicalize(path).ok()))
+        app.session.project.item(*id).and_then(|i| i.as_media()).is_some_and(|m| match &m.media {
+            MediaRef::File { path: p } => match (std::fs::canonicalize(p), std::fs::canonicalize(path)) {
+                (Ok(a), Ok(b)) => a == b,
+                _ => p == path,
+            },
+            _ => false,
+        })
     })
 }
 
@@ -111,42 +118,12 @@ fn assembly_source(app: &FilmcraftApp) -> Option<ItemId> {
 /// UI/control commands share this entry point. Only explicit assembly opens a new editing copy.
 pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: &Value) -> Result<Value, String> {
     match id {
-        "apexAi.open" => {
-            app.apex_ai.open = true;
-            if !app.apex_ai.busy() {
-                app.clear_source_audition();
-                app.apex_ai.auditioned.clear();
-                app.apex_ai.audition_stream = None;
-                let item = params["item"].as_u64().map(ItemId).or(app.session.state.source_item);
-                if let Some(item) = item {
-                    if let Some(record) = app.session.project.recognition.get(&item).cloned() {
-                        app.apex_ai.path = record["sourcePath"].as_str().unwrap_or_default().into();
-                        app.apex_ai.pending = Some(record["result"].clone());
-                        app.apex_ai.media = Some(record["result"]["media"].clone());
-                        app.apex_ai.audio_stream = record["audioStream"].as_u64();
-                        app.apex_ai.origin = Some(Origin { incarnation: app.session.recognition_jobs.incarnation, item });
-                    } else if let Some(MediaRef::File { path }) = app.session.project.item(item).and_then(|i| i.as_media()).map(|m| &m.media) {
-                        if app.apex_ai.path != *path {
-                            app.apex_ai.media = None;
-                            app.apex_ai.audio_stream = None;
-                            app.apex_ai.pending = None;
-                            app.apex_ai.origin = None;
-                        }
-                        app.apex_ai.path = path.clone();
-                    }
-                } else if app.apex_ai.path.is_empty() {
-                    app.apex_ai.path = selected_path(app).unwrap_or_default();
-                }
-            }
-        }
+        "apexAi.open" => queue::open(app, params)?,
         "apexAi.close" => {
             app.apex_ai.open = false;
             app.clear_source_audition();
         }
         "apexAi.audition" => {
-            if app.apex_ai.busy() {
-                return Err("请等待当前分析任务停止后再试听".into());
-            }
             let audio = match params.get("audioStream") {
                 Some(value) => Some(value.as_u64().ok_or("audioStream 必须是非负整数")?),
                 None => app.apex_ai.audio_stream,
@@ -176,75 +153,10 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: &Va
                 app.apex_ai.message = "试听已停止，可确认所选音轨进行分析。".into();
             }
         }
-        "apexAi.probe" | "apexAi.analyze" => {
-            if app.apex_ai.busy() {
-                return Err("AI 任务正在运行，请先等待或取消。".into());
-            }
-            let path = params
-                .get("path")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .or_else(|| (!app.apex_ai.path.trim().is_empty()).then(|| app.apex_ai.path.clone()))
-                .or_else(|| selected_path(app))
-                .ok_or("请先选择原录像。")?;
-            if path.len() > 16_384 || path.contains('\0') {
-                return Err("录像路径无效。".into());
-            }
-            if id == "apexAi.analyze" {
-                let media = app.apex_ai.media.as_ref().ok_or("请先读取录像和音轨。")?;
-                let media_path = media.pointer("/source/path").and_then(Value::as_str).ok_or("媒体记录缺少原片路径。")?;
-                if media_path != path {
-                    return Err("录像已变化，请重新读取音轨。".into());
-                }
-                let audio = match params.get("audioStream") {
-                    Some(v) => Some(v.as_u64().ok_or("audioStream 必须是非负整数。")?),
-                    None => app.apex_ai.audio_stream,
-                }
-                .ok_or("请明确选择用于分析的游戏音轨。")?;
-                if !tracks(media).iter().any(|t| t.get("stream_index").and_then(Value::as_u64) == Some(audio)) {
-                    return Err("所选音轨不存在，请重新读取录像。".into());
-                }
-                app.apex_ai.audio_stream = Some(audio);
-                if tracks(media).len() > 1 && (!app.apex_ai.auditioned.contains(&audio) || app.source_playback.audition_failed()) {
-                    return Err("多音轨录像请先单独试听所选音轨，再确认分析。".into());
-                }
-                let source_item = source_for_path(app, &path).ok_or("请先导入这份录像。")?;
-                app.apex_ai.origin = Some(Origin { incarnation: app.session.recognition_jobs.incarnation, item: source_item });
-                app.apex_ai.token = Some(
-                    app.session.execute("recognition.begin", json!({"item":source_item.0,"audioStream":audio,"media":media})).map_err(|e| e.to_string())?["token"].clone(),
-                );
-            } else {
-                app.clear_source_audition();
-                app.apex_ai.auditioned.clear();
-                app.apex_ai.audition_stream = None;
-                app.apex_ai.media = None;
-                app.apex_ai.audio_stream = None;
-            }
-            if id == "apexAi.analyze" {
-                app.clear_source_audition();
-            }
-            start(app, ctx, &path, id == "apexAi.analyze")?;
-        }
-        "apexAi.cancel" => {
-            app.clear_source_audition();
-            app.apex_ai.auditioned.clear();
-            app.apex_ai.audition_stream = None;
-            if let Some(token) = app.apex_ai.token.take() {
-                let _ = app.session.execute("recognition.cancel", json!({"token":token}));
-            }
-            app.apex_ai.auto_analyze = false;
-            if !app.apex_ai.busy() {
-                app.apex_ai.audio_stream = None;
-                app.apex_ai.stage = "cancelled".into();
-                app.apex_ai.message = "已取消音轨选择，已有工程未改变。".into();
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            if let Some(w) = &mut app.apex_ai.worker {
-                w.cancel();
-                app.apex_ai.stage = "cancelling".into();
-                app.apex_ai.message = "正在停止 AI 任务并清理进程…".into();
-            }
-        }
+        "apexAi.probe" => queue::request(app, params, false)?,
+        "apexAi.analyze" => queue::request(app, params, true)?,
+        "apexAi.cancel" => queue::cancel(app, params)?,
+        "apexAi.retry" => queue::retry(app, params)?,
         "apexAi.apply" => {
             if app.apex_ai.busy() {
                 return Err("请等待当前任务停止。".into());
@@ -265,220 +177,18 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: &Va
         "apexAi.state" | "apexAi.inspect" => {}
         _ => return Err("未知 AI 剪辑命令。".into()),
     }
+    queue::refresh(app);
     ctx.request_repaint();
     Ok(app.apex_ai.snapshot())
 }
 
-fn start(app: &mut FilmcraftApp, ctx: &egui::Context, path: &str, analyze: bool) -> Result<(), String> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let path = std::fs::canonicalize(path).map_err(|e| format!("无法读取录像：{e}"))?;
-        if !path.is_file() {
-            return Err("请选择本地录像文件。".into());
-        }
-        let path = path.to_str().ok_or("录像路径不是有效文本。")?.to_string();
-        let worker = native::Worker::start(&path, analyze.then_some(app.apex_ai.audio_stream).flatten(), ctx.clone())?;
-        app.apex_ai.worker = Some(worker);
-        app.apex_ai.path = path;
-        app.apex_ai.stage = if analyze { "analyzing" } else { "probing" }.into();
-        app.apex_ai.message = if analyze { "正在使用已有模型分析录像…" } else { "正在读取录像与音轨…" }.into();
-        app.apex_ai.error = None;
-        app.apex_ai.progress = None;
-        app.apex_ai.generated = None;
-        app.apex_ai.pending = None;
-        app.apex_ai.cached = false;
-        Ok(())
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = (app, ctx, path, analyze);
-        Err("本地 AI 原型只支持桌面版。".into())
-    }
-}
-
-/// Poll before normal editor events so opening the new sequence reaches the native timeline.
+/// Advance one project-bound analysis worker independently of the dialog selection.
 pub fn poll(app: &mut FilmcraftApp, ctx: &egui::Context) {
-    if app.apex_ai.incarnation != app.session.recognition_jobs.incarnation {
-        app.clear_source_audition();
-        app.apex_ai.auditioned.clear();
-        app.apex_ai.audition_stream = None;
-        app.apex_ai.audio_stream = None;
-        app.apex_ai.media = None;
-        app.apex_ai.origin = None;
-        app.apex_ai.incarnation = app.session.recognition_jobs.incarnation;
-        app.apex_ai.states.clear();
-        app.apex_ai.reference_item = app.session.project.assemblies.last().map(|a| a.source_item).filter(|id| app.session.project.item(*id).is_some());
-        if let Some(MediaRef::File { path }) =
-            app.apex_ai.reference_item.and_then(|id| app.session.project.item(id)).and_then(|i| i.as_media()).map(|m| &m.media)
-        {
-            app.apex_ai.path = path.clone();
-        }
-        app.apex_ai.pending = None;
-        app.apex_ai.token = None;
-        app.apex_ai.generated = app.session.project.assemblies.last().and_then(|a| serde_json::to_value(a).ok());
-        app.apex_ai.auto_analyze = false;
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(w) = &mut app.apex_ai.worker {
-            w.cancel();
-        }
-    }
-    if app.apex_ai.stage == "auditioning" {
-        if app.source_playback.audition_failed() {
-            app.apex_ai.auditioned.clear();
-            app.apex_ai.audition_stream = None;
-            let error = format!("音轨试听失败：{}", app.ui.status);
-            fail(app, error);
-        } else if app.source_playback.clock.audio_clock && app.audio.as_ref().and_then(|a| a.played_frames()).is_some_and(|n| n > 0) {
-            if let Some(audio) = app.apex_ai.audition_stream {
-                app.apex_ai.auditioned.insert(audio);
-            }
-        }
-    }
-    if !app.apex_ai.busy() {
-        while let Some(item) = app.session.recognition_jobs.imports.pop_front() {
-            let Some(media) = app.session.project.item(item).and_then(|i| i.as_media()) else { continue };
-            let MediaRef::File { path } = &media.media else { continue };
-            let path = path.clone();
-            let has_audio = !media.info.audio_streams.is_empty();
-            if media.info.video.is_none() {
-                continue;
-            }
-            app.apex_ai.reference_item = Some(item);
-            if app.session.state.source_item.is_none() {
-                let _ = app.session.execute("source.open", json!({"item":item.0}));
-            }
-            if !has_audio {
-                app.apex_ai.states.insert(item, "不可分析：原片无音轨".into());
-                continue;
-            }
-            app.apex_ai.auto_analyze = true;
-            app.apex_ai.origin = Some(Origin { incarnation: app.session.recognition_jobs.incarnation, item });
-            app.apex_ai.states.insert(item, "读取音轨…".into());
-            app.clear_source_audition();
-            app.apex_ai.auditioned.clear();
-            app.apex_ai.audition_stream = None;
-            app.apex_ai.media = None;
-            app.apex_ai.audio_stream = None;
-            if let Err(e) = start(app, ctx, &path, false) {
-                fail(app, e);
-            }
-            break;
-        }
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let mut events = Vec::new();
-        if let Some(w) = &mut app.apex_ai.worker {
-            w.tick_cancel();
-            if let Some(rx) = &w.receiver {
-                while let Ok(event) = rx.try_recv() {
-                    events.push(event);
-                }
-            }
-            ctx.request_repaint_after(std::time::Duration::from_millis(100));
-        }
-        for event in events {
-            match event {
-                native::Event::Progress { stage, message, progress } => {
-                    app.apex_ai.stage = stage;
-                    app.apex_ai.message = message;
-                    app.apex_ai.progress = progress;
-                    if let Some(origin) = &app.apex_ai.origin {
-                        if origin.matches(&app.session) {
-                            app.apex_ai
-                                .states
-                                .insert(origin.item, format!("{} {}", app.apex_ai.message, progress.map(|p| format!("{:.0}%", p * 100.0)).unwrap_or_default()));
-                        }
-                    }
-                }
-                native::Event::Finished(outcome) => {
-                    let cancelled = app.apex_ai.worker.as_ref().is_some_and(|w| w.cancelled());
-                    if let Some(mut w) = app.apex_ai.worker.take() {
-                        w.finish();
-                    }
-                    if cancelled {
-                        app.apex_ai.stage = "cancelled".into();
-                        app.apex_ai.message = "AI 任务已取消，已有工程未改变。".into();
-                        app.apex_ai.progress = None;
-                        if let Some(origin) = &app.apex_ai.origin {
-                            if origin.matches(&app.session) {
-                                app.apex_ai.states.insert(origin.item, "分析已取消".into());
-                            }
-                        }
-                        continue;
-                    }
-                    match outcome {
-                        Ok(native::Outcome::Media(media)) => {
-                            let list = tracks(&media);
-                            if list.is_empty() {
-                                app.apex_ai.media = Some(media);
-                                app.apex_ai.audio_stream = None;
-                                app.apex_ai.auto_analyze = false;
-                                app.apex_ai.stage = "unavailable".into();
-                                app.apex_ai.message = "原片没有可供分析的音轨；已有工程未改变。".into();
-                                if let Some(origin) = app.apex_ai.origin.as_ref().filter(|o| o.matches(&app.session)) {
-                                    app.apex_ai.states.insert(origin.item, "不可分析：原片没有可用音轨".into());
-                                }
-                                continue;
-                            }
-                            app.apex_ai.audio_stream =
-                                if list.len() == 1 { list.first().and_then(|t| t.get("stream_index")).and_then(Value::as_u64) } else { None };
-                            app.apex_ai.media = Some(media);
-                            app.apex_ai.stage = "ready".into();
-                            app.apex_ai.message = if app.apex_ai.audio_stream.is_some() {
-                                "音轨已就绪。"
-                            } else {
-                                "多音轨录像：请先单独试听，再选择音轨并确认分析。"
-                            }
-                            .into();
-                            if app.apex_ai.auto_analyze && app.apex_ai.audio_stream.is_some() {
-                                app.apex_ai.auto_analyze = false;
-                                if let Err(e) = invoke(app, ctx, "apexAi.analyze", &json!({})) {
-                                    fail(app, e);
-                                }
-                            } else if app.apex_ai.auto_analyze {
-                                app.apex_ai.auto_analyze = false;
-                                app.apex_ai.open = true;
-                            }
-                        }
-                        Ok(native::Outcome::Result { result, cached }) => {
-                            app.apex_ai.cached = cached;
-                            app.apex_ai.pending = Some(result.clone());
-                            app.apex_ai.progress = Some(1.0);
-                            if app.apex_ai.origin.as_ref().is_some_and(|o| o.matches(&app.session)) {
-                                let token = app.apex_ai.token.take().unwrap_or(Value::Null);
-                                match app.session.execute("recognition.attach", json!({"token":token,"result":result})) {
-                                    Ok(_) => {
-                                        app.apex_ai.stage = "completed".into();
-                                        app.apex_ai.message = format!("枪声识别完成：{} 个候选事件。", result["events"].as_array().map_or(0, Vec::len));
-                                        if let Some(origin) = &app.apex_ai.origin {
-                                            app.apex_ai.states.remove(&origin.item);
-                                        }
-                                    }
-                                    Err(e) => fail(app, e.to_string()),
-                                }
-                            } else {
-                                app.apex_ai.pending = None;
-                                app.apex_ai.stage = "stale".into();
-                                app.apex_ai.message = "原工程已切换，迟到结果没有写入当前工程。".into();
-                            }
-                        }
-                        Err(e) => fail(app, e),
-                    }
-                }
-            }
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    let _ = (app, ctx);
+    queue::poll(app, ctx);
 }
 
 fn fail(app: &mut FilmcraftApp, message: String) {
-    if let Some(token) = app.apex_ai.token.take() {
-        let _ = app.session.execute("recognition.cancel", json!({"token":token}));
-    }
     app.apex_ai.pending = None;
-    app.apex_ai.auto_analyze = false;
     if let Some(origin) = &app.apex_ai.origin {
         if origin.matches(&app.session) {
             app.apex_ai.states.insert(origin.item, format!("分析失败：{message}"));
@@ -500,7 +210,7 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
         ui.label("导入录像 → 音轨试听与声音识别 → 原片事件浏览 → 手动选片");
         ui.small("枪声候选不代表本人开枪、命中或击杀。导出沿用编辑器原生设置。");
         let busy = app.apex_ai.busy();
-        ui.add_enabled_ui(!busy, |ui| {
+        ui.add_enabled_ui(true, |ui| {
             let path = ui.text_edit_singleline(&mut app.apex_ai.path);
             app.auto.add("apexAi.path", path.rect, "原录像路径");
             ui.horizontal(|ui| {
@@ -556,12 +266,57 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
                 app.apex_ai.media.as_ref().is_some_and(|m| tracks(m).len() == 1)
                     || (app.apex_ai.auditioned.contains(&audio) && !app.source_playback.audition_failed())
             });
-            let analyze = ui.add_enabled(ready, egui::Button::new("确认音轨并分析声音"));
+            let analyze = ui.add_enabled(ready && queue::can_confirm(app), egui::Button::new("确认音轨并分析声音"));
             app.auto.add("apexAi.analyze", analyze.rect, "确认音轨并分析声音");
             if analyze.clicked() {
                 action = Some(("apexAi.analyze", json!({})));
             }
         });
+        ui.separator();
+        ui.label("分析队列 · 按导入顺序处理就绪项目，待选音轨不阻塞后续素材");
+        for task in app.apex_ai.queue.clone() {
+            let Some(id) = task["id"].as_u64() else { continue };
+            let item = task["item"].as_u64().map(ItemId);
+            let name = task["source_path"]
+                .as_str()
+                .and_then(|p| std::path::Path::new(p).file_name())
+                .and_then(|n| n.to_str())
+                .map(str::to_string)
+                .or_else(|| item.and_then(|i| app.session.project.item(i)).map(|i| i.name.clone()))
+                .unwrap_or_else(|| "已移除素材".into());
+            let status = task["status"].as_str().unwrap_or_default();
+            ui.horizontal(|ui| {
+                let open = ui.button(format!("#{id} {name} · {}", queue::label(status)));
+                app.auto.add(&format!("apexAi.queue.{id}.open"), open.rect, &format!("打开分析任务 {id}"));
+                if open.clicked() {
+                    action = Some(("apexAi.open", json!({"job":id})));
+                }
+                if matches!(status, "queued" | "probing" | "waiting_audio" | "running") {
+                    let cancel = ui.button("取消");
+                    app.auto.add(&format!("apexAi.queue.{id}.cancel"), cancel.rect, "取消此分析任务");
+                    if cancel.clicked() {
+                        action = Some(("apexAi.cancel", json!({"job":id})));
+                    }
+                } else {
+                    let retry = ui.button("重试");
+                    app.auto.add(&format!("apexAi.queue.{id}.retry"), retry.rect, "主动重试此分析任务");
+                    if retry.clicked() {
+                        action = Some(("apexAi.retry", json!({"job":id})));
+                    }
+                }
+            });
+            if let Some(error) = task["error"].as_str() {
+                ui.small(error);
+            }
+            if let Some((message, progress)) = app.apex_ai.job_progress.get(&id) {
+                if matches!(status, "probing" | "running") {
+                    ui.small(message);
+                    if let Some(progress) = progress {
+                        ui.add(egui::ProgressBar::new(*progress));
+                    }
+                }
+            }
+        }
         if busy {
             match app.apex_ai.progress {
                 Some(p) => {
@@ -571,10 +326,10 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
                     ui.spinner();
                 }
             }
-            let cancel = ui.button("取消 AI 任务");
+            let cancel = ui.button("取消当前运行任务");
             app.auto.add("apexAi.cancel", cancel.rect, "取消 AI 任务");
             if cancel.clicked() {
-                action = Some(("apexAi.cancel", json!({})));
+                action = Some(("apexAi.cancel", json!({"job":app.apex_ai.active.as_ref().map(|a|a.id)})));
             }
         }
         ui.label(&app.apex_ai.message);
@@ -667,9 +422,23 @@ mod native {
         Media(Value),
         Result { result: Value, cached: bool },
     }
+    pub struct Failure {
+        pub code: Option<String>,
+        pub message: String,
+    }
+    impl From<String> for Failure {
+        fn from(message: String) -> Self {
+            Self { code: None, message }
+        }
+    }
+    impl From<&str> for Failure {
+        fn from(message: &str) -> Self {
+            message.to_string().into()
+        }
+    }
     pub enum Event {
         Progress { stage: String, message: String, progress: Option<f32> },
-        Finished(Result<Outcome, String>),
+        Finished(Result<Outcome, Failure>),
     }
 
     pub struct Worker {
@@ -786,7 +555,7 @@ mod native {
         cancel: &AtomicBool,
         sender: &SyncSender<Event>,
         ctx: &egui::Context,
-    ) -> Result<Outcome, String> {
+    ) -> Result<Outcome, Failure> {
         if cancel.load(Ordering::Relaxed) {
             return Err("任务已取消。".into());
         }
@@ -852,7 +621,12 @@ mod native {
                         cached: event.get("cached").and_then(Value::as_bool).unwrap_or(false),
                     })
                 }
-                Some("error") => error = Some(event.get("message").and_then(Value::as_str).unwrap_or("AI 分析失败。 ").chars().take(4096).collect::<String>()),
+                Some("error") => {
+                    error = Some(Failure {
+                        code: event["code"].as_str().map(|c| c.chars().take(128).collect()),
+                        message: event.get("message").and_then(Value::as_str).unwrap_or("AI 分析失败。").chars().take(4096).collect(),
+                    })
+                }
                 _ => return Err("AI 桥返回了不支持的消息类型。".into()),
             }
         }
@@ -876,7 +650,7 @@ mod native {
             return Err(error);
         }
         if !status.success() {
-            return Err(format!("AI 桥退出失败：{status}"));
+            return Err(format!("AI 桥退出失败：{status}").into());
         }
         outcome.ok_or_else(|| "AI 进程已结束，但没有返回结果。".into())
     }

@@ -9,6 +9,8 @@
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable))]
 
+pub mod analysis;
+pub use analysis::AnalysisTask;
 pub mod caption;
 pub mod effect;
 pub mod essential;
@@ -1257,6 +1259,9 @@ pub struct Project {
     /// Source-time analysis evidence. Display metadata, never renderable clips.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub recognition: BTreeMap<ItemId, std::sync::Arc<serde_json::Value>>,
+    /// Operational requests; restored unfinished tasks require explicit retry.
+    #[serde(default, deserialize_with = "analysis::restore", skip_serializing_if = "analysis::is_empty")]
+    pub analysis_queue: std::sync::Arc<Vec<AnalysisTask>>,
     /// Independent project-local source ranges, never model events or rendered clips.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub selection_ranges: BTreeMap<ItemId, Vec<SelectionRange>>,
@@ -1372,6 +1377,7 @@ impl Project {
             luts: Vec::new(),
             transcripts: BTreeMap::new(),
             recognition: BTreeMap::new(),
+            analysis_queue: std::sync::Arc::new(Vec::new()),
             selection_ranges: BTreeMap::new(),
             assemblies: Vec::new(),
             search_bins: Vec::new(),

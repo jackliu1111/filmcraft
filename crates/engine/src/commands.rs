@@ -3523,6 +3523,7 @@ fn build() -> Vec<CommandSpec> {
     crate::sequence_tools::splice(&mut v);
     v.extend(crate::captions::commands());
     v.extend(crate::recognition::commands());
+    v.extend(crate::analysis_queue::commands());
     v.extend(crate::selection::commands());
     v.extend(crate::selection_placement::commands());
     v.extend(crate::assembly::commands());
@@ -4375,6 +4376,7 @@ pub fn inspect_project(s: &Session) -> Value {
         "path": s.path,
         "dirty": s.is_dirty(),
         "revision": s.revision,
+        "editingRevision": s.editing_revision(),
         "root": bin(&p.root, p),
         "activeSequence": s.state.active_sequence.map(|i| i.0),
         "sourceItem": s.state.source_item.map(|i| i.0),

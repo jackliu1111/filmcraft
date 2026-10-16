@@ -72,7 +72,10 @@ fn focus(app: &mut FilmcraftApp, ctx: &egui::Context, item: ItemId, range: &Sele
     ctx.memory_mut(|m| m.request_focus(key(item, &range.range_id, part)));
 }
 fn commit(app: &mut FilmcraftApp, drag: Drag) {
-    if drag.incarnation != app.session.recognition_jobs.incarnation || drag.project_revision != app.session.revision || drag.preview.duration <= Tick::ZERO {
+    if drag.incarnation != app.session.recognition_jobs.incarnation
+        || drag.project_revision != app.session.editing_revision()
+        || drag.preview.duration <= Tick::ZERO
+    {
         return;
     }
     let mut params = json!({"item":drag.item.0,"start":drag.preview.start.0,"duration":drag.preview.duration.0,"projectToken":drag.incarnation});
@@ -112,7 +115,7 @@ pub fn handle_keys(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
     }
     if app.selection_ranges.drag.as_ref().is_some_and(|d| {
         d.incarnation != app.session.recognition_jobs.incarnation
-            || d.project_revision != app.session.revision
+            || d.project_revision != app.session.editing_revision()
             || app.session.state.source_item.is_some_and(|id| id != d.item)
     }) {
         app.selection_ranges.drag = None;
@@ -240,7 +243,7 @@ pub fn handle_keys(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
             rate,
             pointer_x: 0.0,
             incarnation: selected.incarnation,
-            project_revision: app.session.revision,
+            project_revision: app.session.editing_revision(),
         };
         let at = if edge == RangeEdge::Out { preview.end() - rate.frame_duration() } else { preview.start };
         commit(app, drag);
@@ -261,7 +264,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, item: ItemId, category: &
         app.selection_ranges.cancelled = false;
     }
     if let Some(d) = &app.selection_ranges.drag {
-        if d.item != item || d.incarnation != app.session.recognition_jobs.incarnation || d.project_revision != app.session.revision {
+        if d.item != item || d.incarnation != app.session.recognition_jobs.incarnation || d.project_revision != app.session.editing_revision() {
             app.selection_ranges.drag = None;
         }
     }
@@ -297,7 +300,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, item: ItemId, category: &
             rate,
             pointer_x: pointer.x,
             incarnation: app.session.recognition_jobs.incarnation,
-            project_revision: app.session.revision,
+            project_revision: app.session.editing_revision(),
         });
         app.selection_ranges.focused = true;
         app.ui.focused = PanelKind::Timeline;
@@ -395,7 +398,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, item: ItemId, category: &
                     rate,
                     pointer_x: pointer.x,
                     incarnation: app.session.recognition_jobs.incarnation,
-                    project_revision: app.session.revision,
+                    project_revision: app.session.editing_revision(),
                 });
             }
         }

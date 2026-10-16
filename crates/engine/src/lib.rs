@@ -10,6 +10,7 @@
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable))]
 
+mod analysis_queue;
 pub mod aaf_omf;
 mod assembly;
 pub mod autosave;
@@ -389,6 +390,8 @@ pub struct Session {
     pub project: Arc<Project>,
     pub history: History,
     pub revision: u64,
+    /// Operational analysis metadata revisions, excluded from edit-preview invalidation.
+    analysis_metadata_updates: u64,
     pub saved_revision: u64,
     pub path: Option<String>,
     pub state: EditorState,
@@ -508,6 +511,7 @@ impl Session {
             recognition_jobs: Default::default(),
             history: History { limit: 200, ..Default::default() },
             revision: 1,
+            analysis_metadata_updates: 0,
             saved_revision: 1,
             path: None,
             state: EditorState {
@@ -1060,6 +1064,12 @@ impl Session {
         {
             self.state.gap_selection = None;
         }
+    }
+
+    /// Changes that can affect a captured editing preview. Queue status still
+    /// increments `revision` for persistence without interrupting a range drag.
+    pub fn editing_revision(&self) -> u64 {
+        self.revision.saturating_sub(self.analysis_metadata_updates)
     }
 
     fn bump(&mut self) {
