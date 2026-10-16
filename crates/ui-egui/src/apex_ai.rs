@@ -145,7 +145,11 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: &Va
             if app.apex_ai.busy() {
                 return Err("请等待当前分析任务停止后再试听".into());
             }
-            let audio = params.get("audioStream").and_then(Value::as_u64).or(app.apex_ai.audio_stream).ok_or("请先选择试听音轨")?;
+            let audio = match params.get("audioStream") {
+                Some(value) => Some(value.as_u64().ok_or("audioStream 必须是非负整数")?),
+                None => app.apex_ai.audio_stream,
+            }
+            .ok_or("请先选择试听音轨")?;
             let media = app.apex_ai.media.clone().ok_or("请先读取音轨")?;
             let source = source_for_path(app, &app.apex_ai.path).ok_or("请先导入这份录像")?;
             let mapping = app.session.execute("recognition.mapAudio", json!({"item":source.0,"media":media})).map_err(|e| e.to_string())?;
