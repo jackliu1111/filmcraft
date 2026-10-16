@@ -16,7 +16,7 @@ pub fn duration(app: &FilmcraftApp) -> f64 {
     reference(app).and_then(|id| app.session.project.item(id)).map_or(0.0, |i| i.duration().seconds())
 }
 pub fn reserve(app: &FilmcraftApp, rect: Rect) -> Rect {
-    let height = if app.apex_ai.collapsed { 86.0 } else { 112.0 };
+    let height = if app.apex_ai.collapsed { 86.0 } else { 140.0 };
     if reference(app).is_some() && rect.height() >= height + 80.0 { Rect::from_min_max(pos2(rect.left(), rect.top() + height + 2.0), rect.max) } else { rect }
 }
 
@@ -28,7 +28,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) -> Rect {
     let name = item.name.clone();
     let duration = item.duration().seconds();
     let record = app.session.project.recognition.get(&id).cloned();
-    let height = if app.apex_ai.collapsed { 86.0 } else { 112.0 };
+    let height = if app.apex_ai.collapsed { 86.0 } else { 140.0 };
     if rect.height() < height + 80.0 {
         return rect;
     }
@@ -71,7 +71,15 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) -> Rect {
     p.text(pos2(area.left() + 6.0, area.top() + 10.0), Align2::LEFT_CENTER, "原片时间 · 不参与成片渲染", Tokens::ui(10.0), app.tokens.text_dim);
     let status = record
         .as_ref()
-        .map(|r| format!("枪声：{} 个候选事件", r["result"]["events"].as_array().map_or(0, Vec::len)))
+        .map(|r| {
+            let voice = &r["result"]["categories"]["voice"];
+            let voice_status = if voice["status"] == "unavailable" || voice["events"].as_array().is_none() {
+                "不可用".to_owned()
+            } else {
+                voice["events"].as_array().map_or(0, Vec::len).to_string()
+            };
+            format!("枪声 {} · 人声 {}", r["result"]["events"].as_array().map_or(0, Vec::len), voice_status)
+        })
         .or_else(|| app.apex_ai.states.get(&id).cloned())
         .unwrap_or_else(|| "未分析".into());
     let label = Rect::from_min_max(pos2(x0, area.top()), pos2(area.right() - 80.0, area.top() + 20.0));
@@ -112,28 +120,61 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) -> Rect {
     }
     let fold = Rect::from_min_size(pos2(area.left() + 5.0, area.top() + 62.0), vec2(head - 10.0, 21.0));
     let r = ui.interact(fold, ui.id().with("recognition-fold"), Sense::click());
-    app.auto.add("recognition.gunshot.toggle", fold, "展开或折叠枪声识别子行");
+    app.auto.add("recognition.audio.toggle", fold, "展开或折叠声音识别子行");
     if r.clicked() {
         app.apex_ai.collapsed = !app.apex_ai.collapsed;
     }
     if !app.apex_ai.collapsed {
-        let y = area.top() + 86.0;
-        p.text(pos2(area.left() + 12.0, y + 10.0), Align2::LEFT_CENTER, "▾ 枪声候选", Tokens::ui(11.0), Color32::from_rgb(238, 172, 79));
-        if let Some(events) = record.as_ref().and_then(|r| r["result"]["events"].as_array()) {
-            for (index, event) in events.iter().enumerate() {
-                let (Some(start), Some(end)) = (event["start_s"].as_f64(), event["end_s"].as_f64()) else { continue };
-                let bar = Rect::from_min_max(pos2(x(start).max(x0), y + 2.0), pos2(x(end).min(area.right()), y + 21.0));
-                if !bar.is_positive() {
-                    continue;
+        for (row, category, name, color) in
+            [(0, "gunshot", "枪声候选", Color32::from_rgb(238, 172, 79)), (1, "voice", "人声候选", Color32::from_rgb(106, 191, 207))]
+        {
+            let y = area.top() + 86.0 + row as f32 * 26.0;
+            let collapsed = if category == "gunshot" { app.apex_ai.gunshot_collapsed } else { app.apex_ai.voice_collapsed };
+            let label = Rect::from_min_max(pos2(area.left() + 5.0, y), pos2(x0 - 5.0, y + 23.0));
+            p.text(label.left_center(), Align2::LEFT_CENTER, format!("{} {name}", if collapsed { "▸" } else { "▾" }), Tokens::ui(11.0), color);
+            let response = ui.interact(label, ui.id().with(("recognition-category-fold", category)), Sense::click());
+            app.auto.add(&format!("recognition.{category}.toggle"), label, &format!("展开或折叠{name}子行"));
+            if response.clicked() {
+                if category == "gunshot" {
+                    app.apex_ai.gunshot_collapsed = !collapsed;
+                } else {
+                    app.apex_ai.voice_collapsed = !collapsed;
                 }
-                p.rect_filled(bar, 2.0, Color32::from_rgb(172, 111, 41));
-                let response = ui.interact(bar, ui.id().with(("recognition-event", id.0, index)), Sense::click());
-                app.auto.add(&format!("recognition.gunshot.event.{index}"), bar, &format!("枪声候选 原片 {start:.2}–{end:.2} 秒"));
-                if response.clicked() {
-                    let _ = app.session.execute("source.open", json!({"item":id.0}));
-                    let _ = app.session.execute("source.setPlayhead", json!({"seconds":start}));
+            }
+            if collapsed {
+                continue;
+            }
+            let category_record = record.as_ref().map(|r| &r["result"]["categories"][category]);
+            let unavailable = category_record.is_none_or(|v| v.is_null() || v["status"] == "unavailable");
+            let events = category_record
+                .and_then(|v| v["events"].as_array())
+                .or_else(|| if category == "gunshot" { record.as_ref().and_then(|r| r["result"]["events"].as_array()) } else { None });
+            let message = if category == "voice" && unavailable {
+                "暂无可用人声分数（需重新读取完整预测）"
+            } else if events.is_some_and(Vec::is_empty) {
+                "分析完成 · 无候选事件"
+            } else if events.is_none() {
+                "未分析"
+            } else {
+                ""
+            };
+            p.text(pos2(x0 + 5.0, y + 11.0), Align2::LEFT_CENTER, message, Tokens::ui(10.0), app.tokens.text_dim);
+            if let Some(events) = events {
+                for (index, event) in events.iter().enumerate() {
+                    let (Some(start), Some(end)) = (event["start_s"].as_f64(), event["end_s"].as_f64()) else { continue };
+                    let bar = Rect::from_min_max(pos2(x(start).max(x0), y + 2.0), pos2(x(end).min(area.right()), y + 21.0));
+                    if !bar.is_positive() {
+                        continue;
+                    }
+                    p.rect_filled(bar, 2.0, color.gamma_multiply(0.7));
+                    let response = ui.interact(bar, ui.id().with(("recognition-event", id.0, category, index)), Sense::click());
+                    app.auto.add(&format!("recognition.{category}.event.{index}"), bar, &format!("{name} 原片 {start:.2}–{end:.2} 秒"));
+                    if response.clicked() {
+                        let _ = app.session.execute("source.open", json!({"item":id.0}));
+                        let _ = app.session.execute("source.setPlayhead", json!({"seconds":start}));
+                    }
+                    response.on_hover_text(format!("{name} · 原片 {start:.2}–{end:.2} 秒\n所选分析音轨的声音候选，不表示说话人身份或转写\n单击定位原片预览"));
                 }
-                response.on_hover_text(format!("枪声候选 · 原片 {start:.2}–{end:.2} 秒\n单击定位原片预览"));
             }
         }
     }
