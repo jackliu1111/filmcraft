@@ -3527,6 +3527,7 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::selection_placement::commands());
     v.extend(crate::assembly::commands());
     v.extend(crate::selection_usage::commands());
+    v.extend(crate::event_mapping::commands());
     v.extend(crate::settings::commands());
     v.extend(crate::mixer::commands());
     v.extend(crate::multicam::commands());

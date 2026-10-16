@@ -1,7 +1,7 @@
 //! Usage is derived from the current sequence's native source intervals, never a saved boolean.
 use crate::commands::{CommandSpec, always, bad};
 use crate::{Result, Session};
-use filmcraft_project::{ItemId, MediaRef};
+use filmcraft_project::{ItemId, MediaRef, TrackItem};
 use filmcraft_time::{Tick, TimeRange};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -15,7 +15,7 @@ pub struct Usage {
     pub covered: Tick,
     pub total: Tick,
 }
-fn same_source(s: &Session, left: ItemId, right: ItemId) -> bool {
+pub(crate) fn same_source(s: &Session, left: ItemId, right: ItemId) -> bool {
     let (Some((li, lm, _)), Some((ri, rm, _))) = (s.project.resolve_media(left), s.project.resolve_media(right)) else { return false };
     if li == ri {
         return true;
@@ -29,15 +29,18 @@ fn same_source(s: &Session, left: ItemId, right: ItemId) -> bool {
         _ => false,
     }
 }
+pub(crate) fn source_span(s: &Session, clip: &TrackItem) -> TimeRange {
+    if let Some(hold) = clip.frame_hold {
+        TimeRange::new(hold, s.project.resolve_media(clip.item).map(|(_, media, _)| media.frame_rate().frame_duration()).unwrap_or(Tick(1)))
+    } else {
+        TimeRange::from_bounds(clip.source_in, clip.source_out())
+    }
+}
 pub fn usage(s: &Session, item: ItemId, range: TimeRange) -> Usage {
     let mut units = BTreeMap::<(bool, u64), Vec<TimeRange>>::new();
     if let Some(q) = s.active_sequence() {
         for clip in q.all_tracks().flat_map(|t| t.items.iter()).filter(|c| same_source(s, c.item, item)) {
-            let span = if let Some(hold) = clip.frame_hold {
-                TimeRange::new(hold, s.project.item(clip.item).map(|i| i.frame_rate().frame_duration()).unwrap_or(Tick(1)))
-            } else {
-                TimeRange::from_bounds(clip.source_in, clip.source_out())
-            };
+            let span = source_span(s, clip);
             let (start, end) = (span.start.max(range.start), span.end().min(range.end()));
             if start < end {
                 units.entry(clip.link.map(|id| (true, id)).unwrap_or((false, clip.id.0))).or_default().push(TimeRange::from_bounds(start, end));

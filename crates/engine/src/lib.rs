@@ -49,6 +49,7 @@ pub mod relink;
 pub mod remix;
 pub mod scene_detect;
 pub mod scopes;
+pub mod event_mapping;
 pub mod selection;
 pub mod selection_placement;
 pub mod selection_usage;
@@ -1356,3 +1357,6 @@ mod selection_tests;
 mod selection_placement_tests;
 #[cfg(test)]
 mod assembly_tests;
+
+#[cfg(test)]
+mod event_mapping_tests;

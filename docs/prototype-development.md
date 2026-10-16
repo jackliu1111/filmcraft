@@ -17,7 +17,7 @@
 - [Q1–Q19 方案](ai-selection/design/recognition-workspace.md)、[术语表](ai-selection/GLOSSARY.md)及相关决策已位于本仓库。
 - [网页原型](../prototypes/ai-selection/README.md)及预览素材已迁入，可从当前仓库直接启动。
 - [12 张工单与依赖](ai-selection/tickets/README.md)已准备本地快照；远端工单仍在 Apex，转移另行处理。
-- [AI 接入入口](../integrations/apex-ai/README.md)可配置外部共享引擎位置；旧 Rust 补丁保留为版本化参考，尚未应用到新底座。
+- [AI 接入入口](../integrations/apex-ai/README.md)可配置外部共享引擎位置；当前原生接入、连续编辑与验收进度见[实现记录](ai-selection/implementation/README.md)，旧 Rust 补丁仅作为版本化迁移参考。
 
 产品行为继续以已确认方案为准。迁移记录见 [交接说明](ai-selection/handoff.md)。
 
