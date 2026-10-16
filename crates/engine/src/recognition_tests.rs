@@ -92,3 +92,45 @@ fn recognition_survives_real_disk_save_and_open_but_pending_task_does_not() {
     std::fs::remove_file(project_path).unwrap();
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn recognition_rejects_voice_category_outside_source_even_when_legacy_gun_events_are_valid() {
+    let (mut s, path) = recording();
+    let before = s.execute("project.inspect", json!({})).unwrap();
+    let job = s.execute("recognition.begin", json!({"item":5,"audioStream":1})).unwrap();
+    let mut result = result(&path);
+    result["categories"] = json!({"voice":{"status":"completed","events":[{"start_s":99.0,"end_s":101.0}],"candidates":[]}});
+    assert!(s.execute("recognition.attach", json!({"token":job["token"],"result":result})).is_err());
+    assert_eq!(s.execute("project.inspect", json!({})).unwrap(), before);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn recognition_preserves_overlapping_voice_events_policy_and_unavailable_status_through_disk_open() {
+    let (mut s, path) = recording();
+    let mut r = result(&path);
+    r["categories"] = json!({
+        "gunshot":{"status":"completed","events":r["events"],"candidates":r["candidates"]},
+        "voice":{"status":"completed","postprocess":{"version":"filmcraft-spoken-voice-v1","candidate_padding_s":1.0},
+          "events":[{"event_id":"voice-1","start_s":11.0,"end_s":13.0}],
+          "candidates":[{"candidate_id":"voice-1:range","start_s":10.0,"end_s":14.0}]}
+    });
+    let before = s.execute("sequence.inspect", json!({})).unwrap();
+    let job = s.execute("recognition.begin", json!({"item":5,"audioStream":1})).unwrap();
+    s.execute("recognition.attach", json!({"token":job["token"],"result":r})).unwrap();
+    assert_eq!(s.execute("sequence.inspect", json!({})).unwrap(), before);
+    let project_path = format!("{path}.voice.fcproj");
+    s.execute("file.saveAs", json!({"path":project_path})).unwrap();
+    let mut reopened = Session::default();
+    reopened.execute("file.open", json!({"path":project_path})).unwrap();
+    assert_eq!(reopened.execute("recognition.inspect", json!({"item":5})).unwrap()["result"], r);
+    let job = reopened.execute("recognition.begin", json!({"item":5,"audioStream":1})).unwrap();
+    r["categories"]["voice"] = json!({"status":"unavailable","reason":"missing_class_scores","events":[],"candidates":[]});
+    reopened.execute("recognition.attach", json!({"token":job["token"],"result":r})).unwrap();
+    reopened.execute("file.save", json!({})).unwrap();
+    let mut missing_reopened = Session::default();
+    missing_reopened.execute("file.open", json!({"path":project_path})).unwrap();
+    assert_eq!(missing_reopened.execute("recognition.inspect", json!({"item":5})).unwrap()["result"]["categories"]["voice"]["status"], "unavailable");
+    std::fs::remove_file(project_path).unwrap();
+    std::fs::remove_file(path).unwrap();
+}

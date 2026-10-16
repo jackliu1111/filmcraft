@@ -1001,6 +1001,16 @@ pub struct Sequence {
     /// Split In/Out points (Markers ▸ Mark Split): per-channel overrides of `mark_in`/`mark_out`.
     #[serde(default, skip_serializing_if = "SplitMarks::is_empty")]
     pub split: SplitMarks,
+    /// The explicit target of contiguous source-range edits. Rendering still uses the ordinary
+    /// video/audio tracks; this role only controls editing and their associated presentation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editing_track: Option<EditingTrack>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditingTrack {
+    pub video: TrackId,
+    pub audio: Vec<TrackId>,
 }
 
 /// Split edit points: separate video and audio In/Out points (Markers ▸ Mark Split). `None` means
@@ -1533,6 +1543,7 @@ impl Project {
             multicam: None,
             merged: None,
             split: SplitMarks::default(),
+            editing_track: None,
         };
         for i in 0..v {
             let id = TrackId(self.alloc_id());

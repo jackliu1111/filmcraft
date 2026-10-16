@@ -8,7 +8,7 @@ Python 模型核心仍在外部 Apex 仓库，不复制第二份到 FilmCraft。
 
 [backend.json](backend.json)记录参考仓库和提交。当前是开发工作区接入，调用实际检出的代码；修改后端后应记录新提交，不能把该记录误当作已经安装的固定版本包。
 
-`bridge.py` 转发到外部已有 `integrations/filmcraft/bridge.py`；只负责定位、默认数据目录和启动错误，不复制模型、缓存或分析算法。stdout 保持 NDJSON，导入期日志转到 stderr。外部路径不存在时返回明确错误，不偷偷改用另一份引擎。
+`bridge.py` 转发到外部已有 `integrations/filmcraft/bridge.py`，并在后端清理结束后通过同一 `ModelService` 的校验和分页完整分数接口补充人声类别。模型推理与缓存仍由共享核心管理；FilmCraft 适配层拥有明确版本化的声音后处理策略，见 [#23 实现说明](../../docs/ai-selection/implementation/23.md)。stdout 保持 NDJSON，导入期日志转到 stderr。外部路径不存在时返回明确错误，不偷偷改用另一份引擎。
 
 使用现有模型 Python 环境，在 FilmCraft 根目录执行：
 
