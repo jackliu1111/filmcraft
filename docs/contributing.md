@@ -1,8 +1,9 @@
 # Contributing
 
-Read [AGENTS.md](../AGENTS.md) first. Its rules on assets, clean-room code and licences are
-absolute and override everything here. Then read [architecture.md](architecture.md) and the README
-of the crate you will change.
+> 当前 fork 处于 AI 选片原型阶段。工作方式、依赖选择与验证范围以 [AGENTS.md](../AGENTS.md) 和 [原型开发说明](prototype-development.md) 为准。下文保留上游构建与贡献资料；其中的全量 CI、纯 Rust、FFmpeg 仅作测试等历史约定作为参考，不是本原型的强制门禁。
+
+Read the current [AGENTS.md](../AGENTS.md) first. For upstream context, consult
+[architecture.md](architecture.md) and the README of the crate you will change.
 
 ## 1. Setup
 

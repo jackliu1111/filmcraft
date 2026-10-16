@@ -6,3 +6,6 @@ plan/
 .DS_Store
 .claude/worktrees/
 __pycache__/
+
+# Local AI prototype data and evidence
+/outputs/

@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/jackliu1111/apex-fps-mvp",
+  "reference_revision": "978fed1580fdf85d34e2b5c17f973693c5510693",
+  "mode": "external-development-checkout",
+  "default_relative_root": "../apex-fps-mvp",
+  "root_environment_variable": "APEX_SERVICE_ROOT",
+  "entrypoint": "integrations/filmcraft/bridge.py",
+  "model_service_copied": false
+}

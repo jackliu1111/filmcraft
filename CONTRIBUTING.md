@@ -1,18 +1,13 @@
-# Contributing to FilmCraft
+# 参与 FilmCraft AI 选片原型
 
-Thanks for helping. Before you start:
+当前 fork 的目标是验证 AI 辅助选片和原生剪辑流程。先阅读 [AGENTS.md](AGENTS.md)；具体接入、迁移和验收方式见 [原型开发说明](docs/prototype-development.md)。
 
-1. Read **[AGENTS.md](AGENTS.md)**. Its rules are absolute. In particular: no Adobe assets of any
-   kind, every asset openly licensed with an attribution sidecar, no GPL/LGPL code, and ffmpeg only
-   as an external test oracle.
-2. **Never crash.** A crash loses someone's work, so this rule outranks feature work: no `unwrap()`,
-   `expect()`, `panic!`, `unreachable!`, `todo!`, `unimplemented!` or `unsafe` in production code;
-   return `Result` and treat every input as hostile. See [AGENTS.md](AGENTS.md) §0.
-3. Follow **[docs/contributing.md](docs/contributing.md)**: setup per OS, building and running,
-   the quality gates (`cargo xtask ci`), commit conventions, and how to add commands, effects,
-   transitions, codecs, panels and assets.
+- 优先复用已有功能，按一个可体验的行为推进。
+- 可以使用 Rust、Python、FFmpeg 和网页交互演示；按实际目标选择工具。
+- 按影响范围检查代码和交互，提交时写明验证结果、模拟部分及已知限制。
+- 原片、人工编辑和分析结果的归属需要明确；失败或取消应保留已有工作。
+- 保留现有许可和必要署名；原型阶段无需为每次改动执行完整上游投稿或发行流程。
 
-More reading: [docs/architecture.md](docs/architecture.md), [docs/testing.md](docs/testing.md),
-[docs/agents.md](docs/agents.md), [ROADMAP.md](ROADMAP.md).
+[上游构建与贡献参考](docs/contributing.md)、[架构说明](docs/architecture.md)和 [测试参考](docs/testing.md)可按需查阅。准备正式发行或提交上游时，再核对相应要求。
 
-Contributions are licensed under MIT OR Apache-2.0, the project licence.
+本次开发约定调整不改变仓库现有许可证或第三方内容的权利归属。

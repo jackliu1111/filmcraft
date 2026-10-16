@@ -1,0 +1,341 @@
+{
+  "status": "published-and-verified",
+  "tracker": "github",
+  "repository": "jackliu1111/apex-fps-mvp",
+  "publication_label": "ready-for-agent",
+  "source_commit": "db9dd86f070682163614442cfc9c63cf7eccfc10",
+  "source_branch": "codex/grill-ai-selection-decisions",
+  "source_spec": "../design/recognition-workspace.md",
+  "confirmed_decisions": "Q1–Q19",
+  "parent_issue": null,
+  "reviewed_at": "2026-10-14 Asia/Shanghai",
+  "existing_issue_check": {
+    "range": "3–18",
+    "state": "closed",
+    "no_duplicate_ai_selection_tickets": true
+  },
+  "tickets": [
+    {
+      "id": 1,
+      "title": "导入录像后自动识别枪声并展示原片子行",
+      "file": "01-import-gunshot-recognition.md",
+      "blocked_by": [],
+      "decisions": [
+        "Q1",
+        "Q3",
+        "Q9",
+        "Q11",
+        "Q19"
+      ],
+      "acceptance_criteria": 7,
+      "implementation_scope": "复用分析与原生媒体，新增自动入口及识别子行",
+      "github_issue": {
+        "number": 21,
+        "url": "https://github.com/jackliu1111/apex-fps-mvp/issues/21",
+        "blocked_by": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "普通素材进入声画关联剪辑轨并连续拼接",
+      "file": "02-contiguous-editing-track.md",
+      "blocked_by": [],
+      "decisions": [
+        "Q16",
+        "Q18",
+        "Q19"
+      ],
+      "acceptance_criteria": 7,
+      "implementation_scope": "复用放置与拖动，适配声画单行及目标轨策略",
+      "github_issue": {
+        "number": 22,
+        "url": "https://github.com/jackliu1111/apex-fps-mvp/issues/22",
+        "blocked_by": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "从真实分析结果展示人声候选子行",
+      "file": "03-voice-recognition-lane.md",
+      "blocked_by": [
+        1
+      ],
+      "decisions": [
+        "Q1",
+        "Q7",
+        "Q10",
+        "Q17"
+      ],
+      "acceptance_criteria": 6,
+      "implementation_scope": "复用完整分数，新增人声候选提取",
+      "github_issue": {
+        "number": 23,
+        "url": "https://github.com/jackliu1111/apex-fps-mvp/issues/23",
+        "blocked_by": [
+          21
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "title": "预览并调整待剪范围，手动划选补片",
+      "file": "04-edit-selection-ranges.md",
+      "blocked_by": [
+        1
+      ],
+      "decisions": [
+        "Q2",
+        "Q6",
+        "Q7",
+        "Q12"
+      ],
+      "acceptance_criteria": 7,
+      "implementation_scope": "复用范围交互与事务，新增独立候选范围",
+      "github_issue": {
+        "number": 24,
+        "url": "https://github.com/jackliu1111/apex-fps-mvp/issues/24",
+        "blocked_by": [
+          21
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "title": "剪辑片段删改、重排与自动合拢",
+      "file": "05-edit-ripple-reorder.md",
+      "blocked_by": [
+        2
+      ],
+      "decisions": [
+        "Q8",
+        "Q12",
+        "Q16",
+        "Q18"
+      ],
+      "acceptance_criteria": 7,
+      "implementation_scope": "复用移动与波纹编辑，适配连续轨规则",
+      "github_issue": {
+        "number": 25,
+        "url": "https://github.com/jackliu1111/apex-fps-mvp/issues/25",
+        "blocked_by": [
+          22
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "title": "拖拽待剪范围加入剪辑轨并提示重复使用",
+      "file": "06-drag-ai-selections.md",
+      "blocked_by": [
+        2,
+        4
+      ],
+      "decisions": [
+        "Q6",
+        "Q8",
+        "Q12",
+        "Q13",
+        "Q16"
+      ],
+      "acceptance_criteria": 8,
+      "implementation_scope": "复用拖动载荷与放置，新增AI范围入口及使用关系",
+      "github_issue": {
+        "number": 26,
+        "url": "https://github.com/jackliu1111/apex-fps-mvp/issues/26",
+        "blocked_by": [
+          22,
+          24
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "title": "选择分析音轨，同时保留剪辑的原有声音",
+      "file": "07-multitrack-analysis-and-retention.md",
+      "blocked_by": [
+        1,
+        2
+      ],
+      "decisions": [
+        "Q9",
+        "Q18"
+      ],
+      "acceptance_criteria": 7,
+      "implementation_scope": "复用音轨确认和多路音频，扩展AI适配与试听",
+      "github_issue": {
+        "number": 27,
+        "url": "https://github.com/jackliu1111/apex-fps-mvp/issues/27",
+        "blocked_by": [
+          21,
+          22
+        ]
+      }
+    },
+    {
+      "id": 8,
+      "title": "多素材分析排队、取消及失败处理",
+      "file": "08-analysis-queue-and-failure.md",
+      "blocked_by": [
+        7
+      ],
+      "decisions": [
+        "Q3",
+        "Q9",
+        "Q15"
+      ],
+      "acceptance_criteria": 7,
+      "implementation_scope": "复用批处理及取消，接入桌面任务编排",
+      "github_issue": {
+        "number": 28,
+        "url": "https://github.com/jackliu1111/apex-fps-mvp/issues/28",
+        "blocked_by": [
+          27
+        ]
+      }
+    },
+    {
+      "id": 9,
+      "title": "映射全部声音事件，区分原片与成片时间",
+      "file": "09-event-mapping-and-time-coordinates.md",
+      "blocked_by": [
+        3,
+        5,
+        6
+      ],
+      "decisions": [
+        "Q13",
+        "Q17",
+        "Q19"
+      ],
+      "acceptance_criteria": 8,
+      "implementation_scope": "复用帧映射和标记，新增事件动态投影",
+      "github_issue": {
+        "number": 29,
+        "url": "https://github.com/jackliu1111/apex-fps-mvp/issues/29",
+        "blocked_by": [
+          23,
+          25,
+          26
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "title": "按当前范围组稿，保留原稿与编辑副本",
+      "file": "10-assemble-current-ranges.md",
+      "blocked_by": [
+        3,
+        4,
+        5
+      ],
+      "decisions": [
+        "Q3",
+        "Q14",
+        "Q14配套"
+      ],
+      "acceptance_criteria": 8,
+      "implementation_scope": "复用原稿副本和组稿，接入当前范围与人声",
+      "github_issue": {
+        "number": 30,
+        "url": "https://github.com/jackliu1111/apex-fps-mvp/issues/30",
+        "blocked_by": [
+          23,
+          24,
+          25
+        ]
+      }
+    },
+    {
+      "id": 11,
+      "title": "保存重开工程，隔离人工编辑与可复用分析",
+      "file": "11-project-recovery-and-cache-isolation.md",
+      "blocked_by": [
+        6,
+        8,
+        10
+      ],
+      "decisions": [
+        "Q12",
+        "Q15",
+        "Q18"
+      ],
+      "acceptance_criteria": 7,
+      "implementation_scope": "复用工程与缓存机制，接入新状态恢复隔离",
+      "github_issue": {
+        "number": 31,
+        "url": "https://github.com/jackliu1111/apex-fps-mvp/issues/31",
+        "blocked_by": [
+          26,
+          28,
+          30
+        ]
+      }
+    },
+    {
+      "id": 12,
+      "title": "真实录像完成选片、重开与原生后台导出验收",
+      "file": "12-real-recording-workflow-acceptance.md",
+      "blocked_by": [
+        9,
+        11
+      ],
+      "decisions": [
+        "Q1–Q19",
+        "代表性验收场景1–8"
+      ],
+      "acceptance_criteria": 8,
+      "implementation_scope": "复用原生导出，完成新流程集成验收",
+      "github_issue": {
+        "number": 32,
+        "url": "https://github.com/jackliu1111/apex-fps-mvp/issues/32",
+        "blocked_by": [
+          29,
+          31
+        ]
+      }
+    }
+  ],
+  "prototype_comparison": {
+    "commit": "978fed1580fdf85d34e2b5c17f973693c5510693",
+    "date": "2026-10-14 Asia/Shanghai",
+    "report": "../reviews/prototype-compatibility.md",
+    "ticket_scope_changed": false,
+    "blocking_edges_changed": false,
+    "evidence": [
+      "source_diff_review",
+      "in_memory_state_reproduction"
+    ],
+    "browser_retested": false,
+    "native_acceptance_performed": false
+  },
+  "native_capability_review": {
+    "date": "2026-10-14 Asia/Shanghai",
+    "repository_commit": "978fed1580fdf85d34e2b5c17f973693c5510693",
+    "upstream_revision": "71438c627b5cbcfb550526c3971f4d0037733c5c",
+    "report": "../reviews/native-capability-audit.md",
+    "evidence": "source_review",
+    "native_runtime_retested": false,
+    "ticket_descriptions_clarified": true,
+    "acceptance_criteria_changed": false,
+    "blocking_edges_changed": false
+  },
+  "publication": {
+    "repository": "jackliu1111/apex-fps-mvp",
+    "verified": true,
+    "ticket_count": 12,
+    "blocking_edge_count": 19,
+    "acceptance_criteria_count": 87,
+    "frontier": [
+      21,
+      22
+    ],
+    "updated_at": "2026-10-14T03:13:17.623936+00:00"
+  },
+  "implementation_repository": "jackliu1111/filmcraft",
+  "local_migration": {
+    "date": "2026-10-16",
+    "source_revision": "978fed1580fdf85d34e2b5c17f973693c5510693",
+    "target_revision": "c2f65871e998cca4700a74dbcf9348cab51fb06b",
+    "github_issues_transferred": false
+  }
+}
