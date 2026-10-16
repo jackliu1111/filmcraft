@@ -13,6 +13,7 @@ pub struct Origin {
     identity: Option<MediaIdentity>,
     size: u64,
     modified: u64,
+    mapping: Option<Value>,
 }
 pub struct Jobs {
     pub pending: BTreeMap<u64, Origin>,
@@ -54,8 +55,21 @@ fn begin(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let path = std::fs::canonicalize(path).map_err(|e| invalid(e.to_string()))?.to_str().ok_or_else(|| invalid("原片路径无效"))?.to_string();
     let (size, modified) = file_stamp(&path)?;
+    let mapping = if let Some(probe) = p.get("media") {
+        Some(map_audio(s, item, probe)?)
+    } else {
+        if media.info.audio_streams.len() != 1 {
+            return Err(invalid("多音轨录像需要先读取并确认音轨映射"));
+        }
+        None
+    };
+    if let Some(mapping) = &mapping {
+        if !mapping["audioMapping"].as_array().is_some_and(|rows| rows.iter().any(|r| r["containerStream"].as_u64() == Some(audio))) {
+            return Err(invalid("所选分析音轨不存在"));
+        }
+    }
     let token = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    s.recognition_jobs.pending.insert(token, Origin { item, path, audio, identity: media.identity, size, modified });
+    s.recognition_jobs.pending.insert(token, Origin { item, path, audio, identity: media.identity, size, modified, mapping });
     Ok(json!({"token":token,"item":item.0,"audioStream":audio}))
 }
 fn validate(s: &Session, origin: &Origin, result: &Value) -> Result<()> {
@@ -82,25 +96,29 @@ fn validate(s: &Session, origin: &Origin, result: &Value) -> Result<()> {
     {
         return Err(invalid("分析结果的原录像身份不匹配"));
     }
-    let tracks = media["audio_tracks"].as_array().ok_or_else(|| invalid("结果缺少音轨"))?;
-    if tracks.len() != item.info.audio_streams.len()
-        || tracks.len() != 1
-        || tracks[0]["stream_index"].as_u64() != Some(origin.audio)
-        || media.pointer("/selected_audio/stream_index").and_then(Value::as_u64) != Some(origin.audio)
-    {
-        return Err(invalid("分析结果的音轨不匹配；多音轨需要显式映射"));
+    let mapping = map_audio(s, origin.item, media)?;
+    if origin.mapping.as_ref().is_some_and(|captured| captured != &mapping) {
+        return Err(invalid("分析期间音轨映射已变化"));
     }
-    let audio = &item.info.audio_streams[0];
-    if tracks[0]["sample_rate"].as_u64() != Some(u64::from(audio.sample_rate)) || tracks[0]["channels"].as_u64() != Some(u64::from(audio.channels)) {
-        return Err(invalid("编辑器与分析服务的音轨参数不匹配"));
+    let selected = media.pointer("/selected_audio/stream_index").and_then(Value::as_u64);
+    let rows = mapping["audioMapping"].as_array().ok_or_else(|| invalid("音轨映射缺失"))?;
+    let row = rows.iter().find(|r| r["containerStream"].as_u64() == Some(origin.audio)).ok_or_else(|| invalid("分析音轨不在原录像中"))?;
+    if selected != Some(origin.audio) {
+        return Err(invalid("分析结果使用了另一条音轨"));
     }
-    if media.pointer("/video/start_time_s").and_then(Value::as_f64) != Some(0.0) {
-        return Err(invalid("非零视频起点尚未支持"));
+    let expected_offset = row["audioStartSeconds"].as_f64().ok_or_else(|| invalid("音轨起点无效"))?;
+    for (key, expected) in [("audio_to_video_offset_s", expected_offset), ("audio_origin_s", expected_offset), ("video_origin_s", 0.0)] {
+        let value = &media["selected_audio"][key];
+        if (!value.is_null() || rows.len() > 1) && value.as_f64().is_none_or(|v| !v.is_finite() || (v - expected).abs() > 1e-6) {
+            return Err(invalid("分析音轨的原片时间映射不一致"));
+        }
     }
-    let duration = media["duration_s"].as_f64().filter(|v| v.is_finite() && *v > 0.0).ok_or_else(|| invalid("原片时长无效"))?;
-    if (duration - item.info.duration.seconds()).abs() > 0.25 {
-        return Err(invalid("分析结果与原片时长不一致"));
+    if let Some(offset) = result.pointer("/prediction/audio_to_video_offset_s") {
+        if offset.as_f64().is_none_or(|v| !v.is_finite() || (v - expected_offset).abs() > 1e-6) {
+            return Err(invalid("完整预测与分析音轨的时间偏移不一致"));
+        }
     }
+    let duration = media["duration_s"].as_f64().ok_or_else(|| invalid("时长缺失"))?;
     for key in ["events", "candidates", "selection"] {
         if key == "selection" && result.get(key).is_none() {
             continue;
@@ -144,6 +162,66 @@ fn validate(s: &Session, origin: &Origin, result: &Value) -> Result<()> {
     }
     Ok(())
 }
+/// Native audio streams and ffprobe audio streams are both ordered by container
+/// file order. Require equal coverage, increasing container indices and matching
+/// per-stream parameters before exposing an explicit container-index/ordinal map.
+fn map_audio(s: &Session, id: ItemId, media: &Value) -> Result<Value> {
+    let native = s.project.item(id).and_then(|i| i.as_media()).ok_or_else(|| invalid("原录像不存在"))?;
+    let MediaRef::File { path } = &native.media else {
+        return Err(invalid("需要本地录像"));
+    };
+    if native.offline || native.proxy.is_some() || native.interpret != Default::default() || native.info.video.is_none() {
+        return Err(invalid("音轨选择仅支持在线、无代理且默认解读的原始声画素材"));
+    }
+    let path = std::fs::canonicalize(path).map_err(|e| invalid(e.to_string()))?;
+    let path = path.to_str().ok_or_else(|| invalid("原片路径无效"))?;
+    let (size, modified) = file_stamp(path)?;
+    if media.pointer("/source/path").and_then(Value::as_str) != Some(path)
+        || media.pointer("/source/size_bytes").and_then(Value::as_u64) != Some(size)
+        || media.pointer("/source/mtime_ns").and_then(Value::as_u64) != Some(modified)
+    {
+        return Err(invalid("音轨探测的原录像身份已变化"));
+    }
+    if media.pointer("/video/start_time_s").and_then(Value::as_f64) != Some(0.0) {
+        return Err(invalid("暂不支持非零视频起点的原片时间映射"));
+    }
+    let duration = media["duration_s"].as_f64().filter(|v| v.is_finite() && *v > 0.0).ok_or_else(|| invalid("原片时长无效"))?;
+    if (duration - native.info.duration.seconds()).abs() > 0.25 {
+        return Err(invalid("编辑器与探测的原片时长不一致"));
+    }
+    let tracks = media["audio_tracks"]
+        .as_array()
+        .filter(|v| !v.is_empty() && v.len() <= filmcraft_media::MAX_AUDIO_STREAMS)
+        .ok_or_else(|| invalid("原片没有可分析音轨"))?;
+    if tracks.len() != native.info.audio_streams.len() {
+        return Err(invalid("编辑器与探测的可用音轨数量不一致"));
+    }
+    let mut mapping = Vec::new();
+    let mut previous = None;
+    for (ordinal, (track, audio)) in tracks.iter().zip(&native.info.audio_streams).enumerate() {
+        let stream = track["stream_index"].as_u64().filter(|v| *v <= u64::from(u32::MAX)).ok_or_else(|| invalid("容器音轨索引无效"))?;
+        if previous.is_some_and(|v| stream <= v) {
+            return Err(invalid("容器音轨索引重复或顺序无效"));
+        }
+        previous = Some(stream);
+        if audio.sample_rate == 0
+            || audio.channels == 0
+            || track["sample_rate"].as_u64() != Some(u64::from(audio.sample_rate))
+            || track["channels"].as_u64() != Some(u64::from(audio.channels))
+        {
+            return Err(invalid("编辑器与分析服务的音轨参数不匹配"));
+        }
+        let start = if track["start_time_s"].is_null() && tracks.len() == 1 {
+            0.0
+        } else {
+            track["start_time_s"].as_f64().filter(|v| v.is_finite() && v.abs() < duration).ok_or_else(|| invalid("音轨起点无效或不可映射"))?
+        };
+        mapping
+            .push(json!({"containerStream":stream,"nativeOrdinal":ordinal,"sampleRate":audio.sample_rate,"channels":audio.channels,"audioStartSeconds":start}));
+    }
+    Ok(json!({"audioMapping":mapping,"videoOriginSeconds":0.0,"durationSeconds":duration}))
+}
+
 fn validate_intervals(values: &Value, duration: f64) -> Result<()> {
     let values = values.as_array().filter(|v| v.len() <= 20_000).ok_or_else(|| invalid("事件列表无效或过大"))?;
     for value in values {
@@ -161,7 +239,13 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
     let origin = s.recognition_jobs.pending.get(&token).ok_or_else(|| invalid("任务已取消或工程已切换"))?.clone();
     let result = p.get("result").ok_or_else(|| invalid("result is required"))?;
     validate(s, &origin, result)?;
-    let record = json!({"status":"completed", "audioStream":origin.audio, "sourcePath":origin.path, "result":result});
+    let mapping = map_audio(s, origin.item, &result["media"])?;
+    let ordinal = mapping["audioMapping"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|r| r["containerStream"].as_u64() == Some(origin.audio)))
+        .map(|r| r["nativeOrdinal"].clone())
+        .unwrap_or(Value::Null);
+    let record = json!({"status":"completed", "audioStream":origin.audio, "analysisAudioOrdinal":ordinal,"audioMapping":mapping["audioMapping"], "sourcePath":origin.path, "result":result});
     s.edit("关联声音识别结果", |pr, _| {
         crate::selection::initialize(pr, origin.item, result)?;
         pr.recognition.insert(origin.item, Arc::new(record.clone()));
@@ -173,6 +257,7 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
 pub fn commands() -> Vec<CommandSpec> {
     let make = |id, label, run, journal| CommandSpec { id, label, menu: &[], shortcut: None, params: "{}", enabled: always, run, journal };
     vec![
+        make("recognition.mapAudio", "核对分析音轨映射", |s, p| map_audio(s, item(p)?, &p["media"]), false),
         make("recognition.begin", "开始声音识别", begin, false),
         make("recognition.attach", "关联声音识别", attach, true),
         make(
