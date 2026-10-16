@@ -185,5 +185,12 @@ class ModelService:
         self.analysis(onsets=[0.,1.,1.,3.], offsets=[1.,2.,3.,4.], error='无效时间')
 
 
+    def test_float32_threshold_equality_stays_inactive_like_shared_gun_policy(self):
+        # read_scores converts NPZ float32 values into JSON/Python doubles. This
+        # is float32(0.2), which must still compare equal to the policy threshold.
+        voice = self.analysis(frames=[[0.20000000298023224]*10 for _ in range(4)])['categories']['voice']
+        self.assertEqual([], voice['events'])
+
+
 if __name__ == '__main__':
     unittest.main()

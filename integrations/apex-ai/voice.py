@@ -4,15 +4,20 @@ This is postprocessing, not a second model implementation. Times returned by
 read_scores are already in source-video coordinates and must not shift again.
 """
 import math
+import struct
 
 SPOKEN_CLASSES = (
     'Speech', 'Male speech, man speaking', 'Female speech, woman speaking',
     'Child speech, kid speaking', 'Conversation', 'Narration, monologue',
     'Whispering', 'Speech synthesizer', 'Shout', 'Children shouting',
 )
+# Match the shared core's float32 ndarray comparison after JSON promotes
+# stored values to Python doubles (float32(0.2) is slightly greater than 0.2).
+THRESHOLD = struct.unpack('f', struct.pack('f', .2))[0]
 POLICY = {
     'version': 'filmcraft-spoken-voice-v1', 'owner': 'FilmCraft adaptation',
     'classes': list(SPOKEN_CLASSES), 'threshold': .2, 'comparison': '>',
+    'threshold_precision': 'float32-like-predictions',
     'median_frames': 3, 'median_padding': 'symmetric',
     'combine': 'union', 'events': 'contiguous-active-frames',
     'candidate_padding_s': 1., 'candidate_merge': 'none',
@@ -85,7 +90,7 @@ def categorized_result(service, result, check_cancelled):
         for i, row in enumerate(scores):
             check_cancelled()
             found = [SPOKEN_CLASSES[c] for c in range(len(row))
-                     if sorted((scores[max(0, i-1)][c], row[c], scores[min(len(scores)-1, i+1)][c]))[1] > .2]
+                     if sorted((scores[max(0, i-1)][c], row[c], scores[min(len(scores)-1, i+1)][c]))[1] > THRESHOLD]
             active.append(bool(found))
             contributing.append(found)
         voice['status'] = 'completed'
