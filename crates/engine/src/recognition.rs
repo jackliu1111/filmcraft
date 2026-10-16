@@ -126,6 +126,7 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
     validate(s, &origin, result)?;
     let record = json!({"status":"completed", "audioStream":origin.audio, "sourcePath":origin.path, "result":result});
     s.edit("关联声音识别结果", |pr, _| {
+        crate::selection::initialize(pr, origin.item, result)?;
         pr.recognition.insert(origin.item, Arc::new(record.clone()));
         Ok(())
     })?;

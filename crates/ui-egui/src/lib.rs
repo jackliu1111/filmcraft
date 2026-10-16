@@ -54,6 +54,7 @@ pub mod perf;
 pub mod play_ahead;
 mod rtl;
 pub mod scrub;
+pub mod selection_ranges;
 mod shuttle;
 pub mod source_playback;
 pub mod source_recognition;
@@ -274,6 +275,7 @@ pub(crate) const EXPORT_SAVE_DIALOGS: [(&str, &str, &str); 7] = [
 ];
 
 pub struct FilmcraftApp {
+    pub selection_ranges: selection_ranges::State,
     pub apex_ai: apex_ai::State,
     pub session: Session,
     pub ui: UiState,
@@ -542,6 +544,7 @@ impl FilmcraftApp {
         let language = i18n::Language::parse(&session.prefs.general.interface_language).unwrap_or_default();
         Self {
             apex_ai: Default::default(),
+            selection_ranges: Default::default(),
             session,
             ui: UiState { language, ..UiState::default() },
             tokens: Tokens::for_kind(ThemeKind::Dark),
@@ -1457,6 +1460,9 @@ impl FilmcraftApp {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        if selection_ranges::handle_keys(self, ctx) {
+            return;
+        }
         let workspaces = (dock::names(&self.workspaces), self.ui.workspace.clone());
         if self.bindings_rev != self.session.shortcuts.revision || workspaces != self.menu_workspaces {
             self.menu_workspaces = workspaces;
