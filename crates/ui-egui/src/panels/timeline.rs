@@ -40,6 +40,8 @@ pub type PeakKey = (ItemId, usize);
 /// Transient interaction state.
 #[derive(Default)]
 pub struct TlState {
+    /// Advanced access to the native audio tracks behind the associated editing row.
+    pub editing_audio_expanded: bool,
     pub drag: Option<Drag>,
     /// What the primary button went down on in the Timeline (#259); see [`Pressed`].
     pub pressed: Option<Pressed>,
@@ -62,6 +64,30 @@ pub struct TlState {
     zoom_anchor: Option<(f64, f32)>,
     /// The zoom (points a second) the video thumbnails are laid out at while the view is zooming (#1094).
     thumb_pps: Option<f64>,
+}
+
+fn folded_editing_audio(seq: &Sequence, id: TrackId) -> bool {
+    let Some(target) = &seq.editing_track else { return false };
+    if !target.audio.contains(&id) {
+        return false;
+    }
+    let (Some(video), Some(audio)) = (seq.track(target.video), seq.track(id)) else { return false };
+    audio.transitions.is_empty()
+        && audio.items.iter().all(|a| {
+            a.link.is_some()
+                && video
+                    .items
+                    .iter()
+                    .any(|v| v.link == a.link && v.start == a.start && v.duration == a.duration && v.item == a.item && v.source_in == a.source_in)
+        })
+}
+
+fn drop_audio_track(seq: &Sequence, video: TrackId, index: usize) -> Option<TrackId> {
+    seq.editing_track
+        .as_ref()
+        .filter(|t| t.video == video)
+        .and_then(|t| t.audio.first().copied())
+        .or_else(|| seq.audio_tracks.get(index).or(seq.audio_tracks.first()).map(|t| t.id))
 }
 
 impl TlState {
@@ -438,11 +464,13 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         let rect = Rect::from_min_max(pos2(content.min.x, top), pos2(content.max.x, top + vh));
         rows.push(Row { track: tr.id, kind: TrackKind::Video, index: i, rect, lane: false });
     }
-    let na = seq.audio_tracks.len();
+    let visible_audio: Vec<_> =
+        seq.audio_tracks.iter().enumerate().filter(|(_, tr)| app.tl.editing_audio_expanded || !folded_editing_audio(seq, tr.id)).collect();
+    let na = visible_audio.len();
     let max_as = (na as f32 * ah - audio_area.height()).max(0.0);
     app.ui.timeline.a_scroll = app.ui.timeline.a_scroll.clamp(0.0, max_as);
-    for (i, tr) in seq.audio_tracks.iter().enumerate() {
-        let top = audio_area.min.y + i as f32 * ah - app.ui.timeline.a_scroll;
+    for (visible_index, (i, tr)) in visible_audio.into_iter().enumerate() {
+        let top = audio_area.min.y + visible_index as f32 * ah - app.ui.timeline.a_scroll;
         let rect = Rect::from_min_max(pos2(content.min.x, top), pos2(content.max.x, top + ah));
         rows.push(Row { track: tr.id, kind: TrackKind::Audio, index: i, rect, lane: app.ui.timeline.track_lanes.contains_key(&tr.id.0) });
     }
@@ -522,6 +550,30 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             let x1 = layout.x_of(start + dur);
             let body = Rect::from_min_max(pos2(x0, r.rect.min.y + 1.0), pos2(x1.max(x0 + 1.0), r.rect.max.y - 1.0));
             draw_clip(app, &ctx, &p, body, it, r.kind, selection.contains(&it.id), &t, rate);
+            if !app.tl.editing_audio_expanded
+                && let Some(target) = seq.editing_track.as_ref().filter(|target| target.video == r.track)
+            {
+                let linked_audio = target
+                    .audio
+                    .iter()
+                    .filter(|id| folded_editing_audio(seq, **id))
+                    .filter_map(|id| seq.track(*id))
+                    .flat_map(|tr| &tr.items)
+                    .find(|a| a.link.is_some() && a.link == it.link);
+                if let Some(audio) = linked_audio {
+                    let strip = Rect::from_min_max(pos2(body.min.x, body.max.y - body.height().min(22.0)), body.max);
+                    draw_clip(app, &ctx, &p, strip, audio, TrackKind::Audio, selection.contains(&it.id), &t, rate);
+                    app.auto.add(&format!("timeline.clip.{}", audio.id.0), strip.intersect(content), "Associated audio");
+                }
+                let source = format!(
+                    "Source {:.3}–{:.3}s · Sequence {:.3}–{:.3}s",
+                    it.source_in.seconds(),
+                    it.source_out().seconds(),
+                    start.seconds(),
+                    (start + dur).seconds()
+                );
+                app.auto.add(&format!("timeline.clip.{}.sourceRange", it.id.0), body.intersect(content), &source);
+            }
             if volume_line {
                 super::timeline_volume::paint(&p, body, it);
             }
@@ -1368,7 +1420,18 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
         }
         // 5. name on the lower line (or inline when short)
         if hrect.height() >= 40.0 {
-            p.text(pos2(hrect.min.x + 94.0, hrect.min.y + 34.0), Align2::LEFT_CENTER, &tr.name, Tokens::ui(11.0), t.text_dim);
+            let associated = seq.editing_track.as_ref().is_some_and(|target| target.video == r.track);
+            let name = if associated { "Editing · A/V" } else { &tr.name };
+            p.text(pos2(hrect.min.x + 94.0, hrect.min.y + 34.0), Align2::LEFT_CENTER, name, Tokens::ui(11.0), t.text_dim);
+            if associated && hrect.height() >= 56.0 {
+                let source = tr
+                    .item_at(app.session.playhead())
+                    .map(|clip| format!("Source {:.3}s", clip.source_time_at(app.session.playhead()).seconds()))
+                    .unwrap_or_else(|| "Sequence time".into());
+                let source_rect = Rect::from_min_size(pos2(hrect.min.x + 94.0, hrect.min.y + 43.0), vec2((hw - 94.0).max(0.0), 16.0));
+                p.text(source_rect.left_center(), Align2::LEFT_CENTER, &source, Tokens::ui(10.0), t.text_dim);
+                app.auto.add("timeline.editingTrack.sourceTime", source_rect, &source);
+            }
         }
         // resize track height by dragging the header's bottom edge, or the outer edge of the top video
         // track or the last audio track, which also reaches into the empty space past it
@@ -1397,6 +1460,27 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
             egui::Id::new(("hdr", r.track.0)),
             Sense::click(),
         );
+        if r.kind == TrackKind::Video {
+            app.auto.add(&format!("timeline.track.{label}.menu"), resp.rect, "Track menu (right-click)");
+            resp.context_menu(|ui| {
+                let selected = seq.editing_track.as_ref().is_some_and(|target| target.video == r.track);
+                let choice = ui.button(if selected { "Use Native Track Editing" } else { "Use as Editing Track (A/V)" });
+                app.auto.add("timeline.trackMenu.editingTrack", choice.rect, "Use as Editing Track (A/V)");
+                if choice.clicked() {
+                    let params = if selected {
+                        json!({"enabled":false})
+                    } else {
+                        json!({"track":r.track.0,"audioTrack":drop_audio_track(seq,r.track,r.index).map(|id|id.0)})
+                    };
+                    actions.push(("sequence.setEditingTrack".into(), params));
+                    ui.close();
+                }
+                if selected {
+                    let expand = ui.checkbox(&mut app.tl.editing_audio_expanded, "Show Associated Audio Tracks");
+                    app.auto.add("timeline.trackMenu.expandAudio", expand.rect, "Show Associated Audio Tracks");
+                }
+            });
+        }
         if resp.double_clicked() {
             let h = if r.kind == TrackKind::Video { &mut app.ui.timeline.video_track_h } else { &mut app.ui.timeline.audio_track_h };
             *h = if *h < 50.0 { 64.0 } else { 30.0 };
@@ -1439,7 +1523,11 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
     p.rect_filled(Rect::from_min_max(rect.min, pos2(rect.max.x, ruler.max.y)), 0.0, t.panel_bg);
     // current timecode: Premiere's big blue timecode
     let tc = format_time(app.session.playhead(), rate, seq.settings.drop_frame, TimeDisplay::Timecode, seq.settings.sample_rate as i64);
-    let tc_rect = Rect::from_min_size(pos2(rect.min.x + 14.0, rect.min.y + 4.0), vec2(hw - 20.0, 20.0));
+    let coordinate_w = if seq.editing_track.is_some() { 62.0 } else { 0.0 };
+    let tc_rect = Rect::from_min_size(pos2(rect.min.x + 14.0, rect.min.y + 4.0), vec2((hw - 20.0 - coordinate_w).max(24.0), 20.0));
+    if seq.editing_track.is_some() {
+        p.text(pos2(rect.min.x + hw - 4.0, tc_rect.center().y), Align2::RIGHT_CENTER, "Sequence", Tokens::ui(10.0), t.text_dim);
+    }
     let tc_id = egui::Id::new(("timeline-tc", seq_id));
     match crate::widgets::timecode_field(ui, tc_id, tc_rect, &tc, app.session.playhead(), Tick::ZERO, rate, seq.settings.drop_frame, t.timecode) {
         Some(Ok(time)) => {
@@ -1451,6 +1539,7 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
         None => {}
     }
     app.auto.add("timeline.timecode", tc_rect, &tc);
+    app.auto.add("timeline.sequenceTime", tc_rect, &format!("Sequence time {tc}"));
     // toolbar: 30 × 30 buttons, "on" = #4b4b4b fill
     let mut x = rect.min.x + 12.0;
     let y = rect.min.y + 26.0;
@@ -2927,17 +3016,9 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                 carries && source.is_none_or(|s| if *kind == TrackKind::Video { s.video } else { s.audio })
             },
         );
-        if let Some(band) = row.as_ref().map(|r| r.rect).or(new_track.map(|(_, band)| band)) {
-            let r = Rect::from_min_max(pos2(layout.x_of(t), band.min.y + 1.0), pos2(layout.x_of(t + dur), band.max.y - 1.0));
-            ui.painter().rect_filled(r, 3.0, Color32::from_white_alpha(40));
-            ui.painter().rect_stroke(r, 3.0, Stroke::new(1.5, Color32::WHITE), StrokeKind::Inside);
-            if mods.command {
-                ui.painter().text(r.left_top() + vec2(4.0, -2.0), Align2::LEFT_BOTTOM, tl!("Insert"), Tokens::ui(10.0), Color32::WHITE);
-            }
-        }
         let target = match (&row, new_track) {
             (Some(row), _) => Some(match row.kind {
-                TrackKind::Video => (json!(row.track.0), json!(seq.audio_tracks.get(row.index).or(seq.audio_tracks.first()).map(|t| t.id.0))),
+                TrackKind::Video => (json!(row.track.0), json!(drop_audio_track(seq, row.track, row.index).map(|t| t.0))),
                 TrackKind::Audio => (json!(seq.video_tracks.get(row.index).or(seq.video_tracks.first()).map(|t| t.id.0)), json!(row.track.0)),
             }),
             // the other stream goes on the track of the same number, or on a new one as well
@@ -2945,7 +3026,47 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
             (None, Some((TrackKind::Audio, _))) => Some((seq.video_tracks.get(seq.audio_tracks.len()).map_or(json!("new"), |t| json!(t.id.0)), json!("new"))),
             (None, None) => None,
         };
+        let mut preview_params = json!({"item":item.0,"time":t.0,"insert":mods.command});
+        if let Some((vt, at)) = &target {
+            preview_params["track"] = vt.clone();
+            preview_params["audioTrack"] = at.clone();
+        }
+        if let Some(source) = source {
+            preview_params["sourceIn"] = json!(source.range.start.0);
+            preview_params["duration"] = json!(source.range.duration.0);
+            preview_params["video"] = json!(source.video);
+            preview_params["audio"] = json!(source.audio);
+        }
+        let plan = row.as_ref().map(|_| filmcraft_engine::commands::preview_placement(&app.session, &preview_params));
+        let valid = target.is_some() && plan.as_ref().is_none_or(|p| p.is_ok());
+        if valid && let Some(band) = row.as_ref().map(|r| r.rect).or(new_track.map(|(_, band)| band)) {
+            let resolved = plan.as_ref().and_then(|p| p.as_ref().ok());
+            let time = resolved.and_then(|p| p["time"].as_i64()).map(Tick).unwrap_or(t);
+            let duration = resolved.and_then(|p| p["duration"].as_i64()).map(Tick).unwrap_or(dur);
+            let r = Rect::from_min_max(pos2(layout.x_of(time), band.min.y + 1.0), pos2(layout.x_of(time + duration), band.max.y - 1.0));
+            let painter = ui.painter().with_clip_rect(layout.content);
+            painter.rect_filled(r, 3.0, Color32::from_white_alpha(40));
+            painter.rect_stroke(r, 3.0, Stroke::new(1.5, Color32::WHITE), StrokeKind::Inside);
+            let label = format!("Sequence {:.3}–{:.3}s · {:.3}s", time.seconds(), (time + duration).seconds(), duration.seconds());
+            painter.text(r.left_top() + vec2(4.0, -2.0), Align2::LEFT_BOTTOM, &label, Tokens::ui(10.0), Color32::WHITE);
+            app.auto.add("timeline.placementPreview", r.intersect(layout.content), &label);
+            if let Some(moves) = resolved.and_then(|p| p["shifts"].as_array()) {
+                for moved in moves {
+                    let Some(row) = moved["track"].as_u64().and_then(|id| layout.rows.iter().find(|r| r.track.0 == id)) else { continue };
+                    let Some(start) = moved["to"].as_i64().map(Tick) else { continue };
+                    let Some(duration) = moved["duration"].as_i64().map(Tick) else { continue };
+                    let ghost = Rect::from_min_max(pos2(layout.x_of(start), row.rect.min.y + 2.0), pos2(layout.x_of(start + duration), row.rect.max.y - 2.0));
+                    painter.rect_stroke(ghost, 3.0, Stroke::new(1.0, app.tokens.accent), StrokeKind::Inside);
+                    app.auto.add(
+                        &format!("timeline.placementShift.{}", moved["clip"].as_u64().unwrap_or_default()),
+                        ghost.intersect(layout.content),
+                        "Shifted by insertion",
+                    );
+                }
+            }
+        }
         if ctx.input(|i| i.pointer.any_released())
+            && valid
             && let Some((vt, at)) = target
         {
             // dragging one of several selected project items places them all, back to back, as one edit
@@ -3059,7 +3180,7 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
         let row = layout.row_at(p.y).cloned().or_else(|| layout.rows.iter().find(|r| r.kind == TrackKind::Video).cloned());
         if let Some(row) = row {
             let (vt, at) = match row.kind {
-                TrackKind::Video => (Some(row.track.0), seq.audio_tracks.get(row.index).or(seq.audio_tracks.first()).map(|t| t.id.0)),
+                TrackKind::Video => (Some(row.track.0), drop_audio_track(seq, row.track, row.index).map(|t| t.0)),
                 TrackKind::Audio => (seq.video_tracks.get(row.index).or(seq.video_tracks.first()).map(|t| t.id.0), Some(row.track.0)),
             };
             let start = snap(app, seq, layout, rate.snap_nearest(layout.tick_at(p.x).max(Tick::ZERO)), &[]);
