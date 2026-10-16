@@ -42,6 +42,7 @@ pub mod project_manager;
 pub mod project_panel;
 pub mod project_tools;
 pub mod proxies;
+pub mod recognition;
 pub mod relink;
 pub mod remix;
 pub mod scene_detect;
@@ -378,6 +379,7 @@ pub enum Event {
 }
 
 pub struct Session {
+    pub recognition_jobs: recognition::Jobs,
     pub project: Arc<Project>,
     pub history: History,
     pub revision: u64,
@@ -497,6 +499,7 @@ impl Session {
     pub fn new(services: Arc<dyn Services>) -> Self {
         Self {
             project: Arc::new(Project::new("Untitled")),
+            recognition_jobs: Default::default(),
             history: History { limit: 200, ..Default::default() },
             revision: 1,
             saved_revision: 1,
@@ -1332,3 +1335,6 @@ mod source_placement_tests;
 mod frame_export_tests;
 #[cfg(test)]
 mod wasm_clock_tests;
+
+#[cfg(test)]
+mod recognition_tests;

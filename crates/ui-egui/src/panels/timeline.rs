@@ -325,9 +325,12 @@ fn label_color(app: &FilmcraftApp, l: filmcraft_project::Label) -> Color32 {
 }
 
 pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
+    let source_rect = rect;
+    let rect = crate::source_recognition::reserve(app, rect);
     let t = app.tokens;
     let ctx = ui.ctx().clone();
     let Some(seq_id) = app.session.state.active_sequence else {
+        crate::source_recognition::show(app, ui, source_rect);
         empty_state(app, ui, rect);
         return;
     };
@@ -336,6 +339,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // Cloning a sequence here copies every clip and effect on every redraw.
     let project = app.session.project.clone();
     let Some(seq) = app.session.state.active_sequence.and_then(|id| project.sequence(id)) else {
+        crate::source_recognition::show(app, ui, source_rect);
         empty_state(app, ui, rect);
         return;
     };
@@ -350,8 +354,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
 
     // ---- sequence tabs strip (top-left header block)
     // ---- animated zoom / scroll
-    let empty = seq.duration().seconds() <= 0.0;
-    let dur_s = seq.duration().seconds().max(1.0);
+    let workspace_seconds = seq.duration().seconds().max(crate::source_recognition::duration(app));
+    let empty = workspace_seconds <= 0.0;
+    let dur_s = workspace_seconds.max(1.0);
     {
         let v = &mut app.ui.timeline;
         if let Some(p) = v.fit_empty
@@ -430,13 +435,14 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // a script): scrolled past it, nothing is in view and the scroll bar has nowhere to show it.
     {
         let v = &mut app.ui.timeline;
-        let seconds = seq.duration().seconds();
+        let seconds = workspace_seconds;
         if !v.scroll.is_finite() || !v.target_scroll.is_finite() {
             (v.scroll, v.target_scroll) = (0.0, 0.0);
         }
         v.scroll = v.scroll.clamp(0.0, max_scroll(seconds, content.width(), v.pps));
         v.target_scroll = v.target_scroll.clamp(0.0, max_scroll(seconds, content.width(), v.target_pps));
     }
+    crate::source_recognition::show(app, ui, source_rect);
     let pps = app.ui.timeline.pps;
     let scroll = app.ui.timeline.scroll;
 
@@ -740,7 +746,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         app,
         ui,
         Rect::from_min_max(pos2(content.min.x, rect.max.y - SCROLLBAR_H + 2.0), pos2(content.max.x, rect.max.y - 2.0)),
-        seq.duration().seconds(),
+        workspace_seconds,
         &t,
     );
     vertical_scrollbar(
@@ -2255,9 +2261,9 @@ pub(crate) struct WheelInput {
     pub(crate) delta: egui::Vec2,
     /// Pinch factor (1 = none).
     pub(crate) pinch: f32,
-    command: bool,
-    alt: bool,
-    shift: bool,
+    pub(crate) command: bool,
+    pub(crate) alt: bool,
+    pub(crate) shift: bool,
 }
 
 /// The wheel events of this frame, read from the events themselves: egui turns Cmd + wheel into a
@@ -2358,8 +2364,9 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
             };
             match sideways {
                 Some(d) => {
+                    let seconds = seq.duration().seconds().max(crate::source_recognition::duration(app));
                     let v = &mut app.ui.timeline;
-                    let limit = max_scroll(seq.duration().seconds(), layout.content.width(), v.pps);
+                    let limit = max_scroll(seconds, layout.content.width(), v.pps);
                     v.target_scroll = (v.target_scroll - d as f64 / v.pps).clamp(0.0, limit);
                     v.scroll = v.target_scroll;
                 }
