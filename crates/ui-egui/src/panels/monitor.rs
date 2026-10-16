@@ -324,7 +324,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
     let row1 = Rect::from_min_size(pos2(rect.min.x + 14.0, rect.max.y - controls_h + 2.0), vec2(rect.width() - 28.0, 26.0));
     let tc = format_time(time, rate, drop_frame, TimeDisplay::Timecode, 48000);
     if app.session.active_sequence().is_some_and(|q| q.editing_track.is_some()) {
-        let coordinate = if which == Which::Source { format!("Source {tc}") } else { format!("Sequence {tc}") };
+        let coordinate = format!("{} {tc}", crate::i18n::t(if which == Which::Source { "Source time" } else { "Sequence time" }));
         let badge = Rect::from_min_size(video_area.min + vec2(6.0, 6.0), vec2(180.0, 20.0)).intersect(video_area);
         ui.painter().rect_filled(badge, 3.0, Color32::from_black_alpha(170));
         ui.painter().text(badge.left_center() + vec2(5.0, 0.0), Align2::LEFT_CENTER, &coordinate, Tokens::ui(11.0), Color32::WHITE);
