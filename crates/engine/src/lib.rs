@@ -16,6 +16,7 @@ pub mod captions;
 pub mod clip_ops;
 pub mod color;
 pub mod commands;
+pub mod contiguous;
 pub mod demo;
 pub mod essential_sound;
 pub mod export_tools;
@@ -1325,6 +1326,8 @@ mod vfx_tests;
 #[cfg(test)]
 mod voiceover_tests;
 
+#[cfg(test)]
+mod contiguous_editing_tests;
 #[cfg(test)]
 mod source_placement_tests;
 
