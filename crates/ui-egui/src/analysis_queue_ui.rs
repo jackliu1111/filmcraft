@@ -197,7 +197,14 @@ pub(super) fn poll(app: &mut FilmcraftApp, ctx: &egui::Context) {
         app.apex_ai.origin = None;
         app.apex_ai.selected_job = None;
         app.apex_ai.pending = None;
-        app.apex_ai.reference_item = None;
+        app.apex_ai.states.clear();
+        app.apex_ai.reference_item = app.session.project.assemblies.last().map(|a| a.source_item).filter(|id| app.session.project.item(*id).is_some());
+        if let Some(MediaRef::File { path }) =
+            app.apex_ai.reference_item.and_then(|id| app.session.project.item(id)).and_then(|i| i.as_media()).map(|m| &m.media)
+        {
+            app.apex_ai.path = path.clone();
+        }
+        app.apex_ai.generated = app.session.project.assemblies.last().and_then(|a| serde_json::to_value(a).ok());
         app.apex_ai.job_progress.clear();
         app.apex_ai.incarnation = app.session.recognition_jobs.incarnation;
         #[cfg(not(target_arch = "wasm32"))]

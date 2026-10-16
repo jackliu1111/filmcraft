@@ -2,18 +2,14 @@
 
 use std::sync::Arc;
 
-use filmcraft_engine::{EngineError, Session};
+use filmcraft_engine::Session;
 use filmcraft_project::{ItemId, MediaRef};
-use filmcraft_time::{FrameRate, Tick};
 use serde_json::{Value, json};
 
 use crate::FilmcraftApp;
 
 #[path = "analysis_queue_ui.rs"]
 mod queue;
-
-const MAX_INTERVALS: usize = 4096;
-const MAX_EVENTS: usize = 20_000;
 
 #[derive(Default)]
 pub struct State {
@@ -41,6 +37,7 @@ pub struct State {
     cached: bool,
     origin: Option<Origin>,
     generated: Option<Value>,
+    include_voice: bool,
     #[cfg(not(target_arch = "wasm32"))]
     worker: Option<native::Worker>,
 }
@@ -76,6 +73,7 @@ impl State {
             "error": self.error, "cached": self.cached, "pendingResult": self.pending.is_some(),
             "resultId": self.pending.as_ref().and_then(|r| r.get("result_id")),
             "generated": self.generated,
+            "includeVoice": self.include_voice,
         })
     }
 
@@ -113,7 +111,11 @@ fn source_for_path(app: &FilmcraftApp, path: &str) -> Option<ItemId> {
     })
 }
 
-/// UI/control commands share this entry point. No command starts a new or replacement project.
+fn assembly_source(app: &FilmcraftApp) -> Option<ItemId> {
+    source_for_path(app, &app.apex_ai.path).or(app.session.state.source_item).or(app.apex_ai.reference_item)
+}
+
+/// UI/control commands share this entry point. Only explicit assembly opens a new editing copy.
 pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: &Value) -> Result<Value, String> {
     match id {
         "apexAi.open" => queue::open(app, params)?,
@@ -159,11 +161,18 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: &Va
             if app.apex_ai.busy() {
                 return Err("请等待当前任务停止。".into());
             }
-            let result = app.apex_ai.pending.clone().ok_or("没有已完成的 AI 结果。")?;
-            if !app.apex_ai.origin.as_ref().is_some_and(|o| o.matches(&app.session)) {
-                return Err("项目或源监视器已切换。结果已保留；确认后可加入当前项目。".into());
+            let source = match params.get("item") {
+                Some(v) => v.as_u64().map(ItemId),
+                None => assembly_source(app),
             }
-            apply_result(app, &result)?;
+            .ok_or("请先打开要组稿的原片。")?;
+            let mut assembly = params.clone();
+            assembly["item"] = json!(source.0);
+            if assembly.get("categories").is_none() {
+                assembly["categories"] = if app.apex_ai.include_voice { json!(["gunshot", "voice"]) } else { json!(["gunshot"]) };
+            }
+            app.clear_source_audition();
+            apply_result(app, &assembly)?;
         }
         "apexAi.state" | "apexAi.inspect" => {}
         _ => return Err("未知 AI 剪辑命令。".into()),
@@ -327,23 +336,37 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
         if let Some(error) = &app.apex_ai.error {
             ui.colored_label(egui::Color32::LIGHT_RED, error);
         }
-        if app.apex_ai.pending.is_some() && app.apex_ai.generated.is_none() && !busy {
-            let apply = ui.button("按当前范围组稿");
+        if !busy {
+            ui.separator();
+            ui.label("按当前原片的待剪范围组稿（默认枪声）");
+            let voice = ui.checkbox(&mut app.apex_ai.include_voice, "包含人声待剪范围");
+            app.auto.add("apexAi.includeVoice", voice.rect, "组稿包含人声待剪范围");
+            let source = assembly_source(app);
+            let apply = ui.add_enabled(source.is_some(), egui::Button::new("按当前范围组稿"));
             app.auto.add("apexAi.apply", apply.rect, "按当前范围组稿");
+            ui.small("采用当前人工调整，合并重叠范围；另建组稿原稿与编辑副本，保留此前剪辑。不会重新分析。");
             if apply.clicked() {
-                action = Some(("apexAi.apply", json!({"confirmCurrentProject":true})));
+                action = Some(("apexAi.apply", json!({"item":source.map(|id|id.0),"projectToken":app.session.recognition_jobs.incarnation})));
             }
         }
         if let Some(generated) = &app.apex_ai.generated {
             ui.separator();
-            ui.label(if app.apex_ai.cached { "复用了已有分析结果" } else { "已完成模型分析" });
+            ui.label("组稿基准采用当时的待剪范围，可能包含人工调整");
             if let Some(path) = generated.get("originalProject").and_then(Value::as_str) {
-                ui.small(format!("AI 原稿：{path}"));
+                ui.small(format!("组稿原稿：{path}"));
             }
             if let Some(path) = generated.get("editProject").and_then(Value::as_str) {
-                ui.small(format!("当前编辑副本：{path}"));
+                ui.small(format!("对应编辑副本：{path}"));
+            }
+            if let Some(path) = generated.get("preservedProject").and_then(Value::as_str) {
+                ui.small(format!("组稿前工作：{path}"));
             }
             ui.small("可在时间线删段、改边界、补入原片；完成后使用原生导出。");
+            if app.session.path.as_deref() == generated["originalProject"].as_str() {
+                ui.label("当前查看组稿原稿；保存受保护，可另存副本编辑。");
+            } else {
+                ui.small("当前工程是独立编辑副本；后续修改不会改写组稿原稿。");
+            }
         }
     });
     app.apex_ai.open = open;
@@ -355,81 +378,37 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
     if let Some((command, params)) = action
         && let Err(e) = invoke(app, ctx, command, &params)
     {
-        fail(app, e);
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Interval {
-    start: Tick,
-    end: Tick,
-}
-
-fn tick(value: &Value) -> Result<Tick, String> {
-    let seconds = value.as_f64().filter(|v| v.is_finite() && *v >= 0.0 && *v <= Tick::MAX.seconds()).ok_or("AI 时间范围无效。")?;
-    Ok(Tick::from_seconds_f64(seconds))
-}
-
-fn intervals(result: &Value, rate: FrameRate, duration: Tick) -> Result<Vec<Interval>, String> {
-    let items = result.get("selection").or_else(|| result.get("candidates")).and_then(Value::as_array).ok_or("AI 结果缺少候选范围。")?;
-    if items.len() > MAX_INTERVALS {
-        return Err("候选数量超出本原型支持范围。".into());
-    }
-    let limit = rate.snap(duration);
-    let mut ranges = Vec::new();
-    for item in items {
-        if item.get("selected").is_some_and(|value| !value.is_boolean()) {
-            return Err("候选选择状态无效。".into());
-        }
-        if item.get("selected").and_then(Value::as_bool) == Some(false) {
-            continue;
-        }
-        let start = tick(item.get("start_s").ok_or("候选缺少起点。")?)?;
-        let end = tick(item.get("end_s").ok_or("候选缺少终点。")?)?;
-        if start >= end || end > duration {
-            return Err("候选范围超出原片或起止顺序无效。".into());
-        }
-        let (start, end) = (rate.snap_nearest(start).min(limit), rate.snap_nearest(end).min(limit));
-        if start < end {
-            ranges.push(Interval { start, end });
-        }
-    }
-    ranges.sort_by_key(|r| (r.start, r.end));
-    let mut merged: Vec<Interval> = Vec::new();
-    for range in ranges {
-        if let Some(last) = merged.last_mut().filter(|r| range.start <= r.end) {
-            last.end = last.end.max(range.end);
+        if command == "apexAi.apply" {
+            app.apex_ai.error = Some(e.clone());
+            app.apex_ai.stage = "assemblyFailed".into();
+            app.apex_ai.message = format!("组稿失败：{e}。已有剪辑与识别结果已保留。");
+            app.ui.status = app.apex_ai.message.clone();
         } else {
-            merged.push(range);
+            fail(app, e);
         }
     }
-    Ok(merged)
 }
 
-fn apply_result(app: &mut FilmcraftApp, result: &Value) -> Result<(), String> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let generated = native::apply(&mut app.session, result)?;
-        let count = generated.get("clipCount").and_then(Value::as_u64).unwrap_or(0);
+fn apply_result(app: &mut FilmcraftApp, params: &Value) -> Result<(), String> {
+    let generated = app.session.execute("selection.assemble", params.clone()).map_err(|e| e.to_string())?;
+    if generated["status"] == "noRanges" {
+        app.apex_ai.message = generated["message"].as_str().unwrap_or("没有可组稿范围，已有剪辑未改变。").into();
+    } else {
+        let count = generated["clipCount"].as_u64().unwrap_or(0);
         app.apex_ai.generated = Some(generated);
-        app.apex_ai.error = None;
         app.apex_ai.stage = "completed".into();
-        app.apex_ai.message = format!("已生成 {count} 段连续草稿。AI 原稿已保存，当前打开编辑副本。");
-        app.ui.status = app.apex_ai.message.clone();
+        app.apex_ai.message = format!("已按当前范围生成 {count} 段。组稿原稿与此前工作已保存，当前打开独立编辑副本。");
         app.ui.mode = crate::state::Mode::Edit;
-        Ok(())
     }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = (app, result);
-        Err("本地 AI 原型只支持桌面版。".into())
-    }
+    app.apex_ai.error = None;
+    app.ui.status = app.apex_ai.message.clone();
+    Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use super::*;
-    use std::io::{BufRead, BufReader, Read, Write};
+    use std::io::{BufRead, BufReader, Read};
     use std::path::{Path, PathBuf};
     use std::process::{Child, Command, Stdio};
     use std::sync::Mutex;
@@ -674,184 +653,5 @@ mod native {
             return Err(format!("AI 桥退出失败：{status}").into());
         }
         outcome.ok_or_else(|| "AI 进程已结束，但没有返回结果。".into())
-    }
-
-    fn new_folder(s: &Session) -> Result<PathBuf, String> {
-        let root = std::env::var_os("FILMCRAFT_APEX_PROJECTS_DIR")
-            .map(PathBuf::from)
-            .or_else(|| s.prefs_path.as_ref().and_then(|p| p.parent()).map(|p| p.join("apex-ai-projects")))
-            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../outputs/apex-ai/projects"));
-        if !root.is_absolute() {
-            return Err("AI 工程保存目录必须是绝对路径。".into());
-        }
-        std::fs::create_dir_all(&root).map_err(|e| format!("无法创建 AI 工程目录：{e}"))?;
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos();
-        for suffix in 0..16 {
-            let folder = root.join(format!("draft-{now}-{}-{suffix}", std::process::id()));
-            match std::fs::create_dir(&folder) {
-                Ok(()) => return Ok(folder),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(e) => return Err(format!("无法创建独立草稿目录：{e}")),
-            }
-        }
-        Err("无法分配独立草稿目录。".into())
-    }
-
-    fn source_item(s: &mut Session, path: &str) -> filmcraft_engine::Result<ItemId> {
-        let existing = s.project.items.iter().find_map(|(id, item)| {
-            let media = item.as_media()?;
-            matches!(&media.media, MediaRef::File { path: p } if p == path).then_some(*id)
-        });
-        if let Some(id) = existing {
-            return Ok(id);
-        }
-        let imported = s.execute("file.import", json!({"paths":[path]}))?;
-        if imported.get("errors").and_then(Value::as_array).is_some_and(|v| !v.is_empty()) {
-            return Err(EngineError::Other(format!("导入原片失败：{}", imported.get("errors").unwrap_or(&Value::Null))));
-        }
-        imported
-            .get("items")
-            .and_then(Value::as_array)
-            .and_then(|v| v.first())
-            .and_then(Value::as_u64)
-            .map(ItemId)
-            .ok_or_else(|| EngineError::Other("编辑器未返回导入素材标识。".into()))
-    }
-
-    pub fn apply(s: &mut Session, result: &Value) -> Result<Value, String> {
-        let media = result.get("media").ok_or("AI 结果缺少媒体信息。")?;
-        let path = media.pointer("/source/path").and_then(Value::as_str).ok_or("AI 结果缺少原片路径。")?;
-        let source = Path::new(path);
-        if !source.is_absolute() || !source.is_file() {
-            return Err("AI 原片已移动或不可用，请重新分析。".into());
-        }
-        let stat = std::fs::metadata(source).map_err(|e| format!("无法核对原片：{e}"))?;
-        let modified =
-            stat.modified().map_err(|e| format!("无法核对原片时间：{e}"))?.duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos();
-        if media.pointer("/source/size_bytes").and_then(Value::as_u64) != Some(stat.len())
-            || media.pointer("/source/mtime_ns").and_then(Value::as_u64).map(u128::from) != Some(modified)
-        {
-            return Err("分析完成后原片已变化，请重新读取并分析。".into());
-        }
-        // The model's source time is relative to the first video frame. Nonzero video origins
-        // need a container-specific mapping to FilmCraft's earliest-playable-stream origin.
-        if media.pointer("/video/start_time_s").and_then(Value::as_f64) != Some(0.0) {
-            return Err("结果已保留。本原型尚未验证视频非零起始时间的映射，未自动写入草稿。".into());
-        }
-        let audio_tracks = tracks(media);
-        let selected_audio = media.pointer("/selected_audio/stream_index").and_then(Value::as_u64).ok_or("AI 结果缺少已确认音轨。")?;
-        if !audio_tracks.iter().any(|t| t["stream_index"].as_u64() == Some(selected_audio)) {
-            return Err("分析结果的所选音轨不在原录像中。".into());
-        }
-        let result_id = result.get("result_id").and_then(Value::as_str).filter(|s| !s.is_empty()).ok_or("分析结果缺少标识。")?;
-        let events = result.get("events").and_then(Value::as_array).ok_or("分析结果缺少事件列表。")?;
-        if events.len() > MAX_EVENTS {
-            return Err("AI 事件数量超出原型支持范围。".into());
-        }
-        let folder = new_folder(s)?;
-        let original = folder.join("ai-original.fcproj");
-        let editable = folder.join("edit-copy.fcproj");
-        let original_path = original.to_str().ok_or("工程路径不是有效文本。")?;
-        let edit_path = editable.to_str().ok_or("工程路径不是有效文本。")?;
-        let original_session_path = s.path.clone();
-        let saved_revision = s.saved_revision;
-        // Child commands normally send intermediate snapshots to Auto Save, which may also save
-        // the current project. Keep those snapshots away from the original project path.
-        let persistence = s.persistence.take();
-        let imported = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            s.edit_group("AI 生成连续草稿", |s| {
-                let source_id = source_item(s, path)?;
-                let item = s.project.item(source_id).ok_or_else(|| EngineError::Other("原片素材不存在。".into()))?;
-                let native_media = item.as_media().ok_or_else(|| EngineError::Other("AI 草稿需要文件素材。".into()))?;
-                let video = native_media.info.video.clone().ok_or_else(|| EngineError::Other("原片没有可用视频。".into()))?;
-                let audio = native_media.info.audio_streams.first().cloned().ok_or_else(|| EngineError::Other("编辑器未识别原片音轨。".into()))?;
-                if native_media.offline || native_media.proxy.is_some() || native_media.interpret != Default::default() {
-                    return Err(EngineError::Other("当前素材有离线、代理或自定义解读设置；本原型仅支持原始默认素材，分析结果已保留。".into()));
-                }
-                if video.frame_rate.num <= 0 || video.frame_rate.den <= 0 || video.width == 0 || video.height == 0 || audio.sample_rate == 0 {
-                    return Err(EngineError::Other("原片尺寸、帧率或音频采样率无效。".into()));
-                }
-                if media.pointer("/video/width").and_then(Value::as_u64) != Some(u64::from(video.width))
-                    || media.pointer("/video/height").and_then(Value::as_u64) != Some(u64::from(video.height))
-                {
-                    return Err(EngineError::Other("编辑器和分析服务的视频尺寸不一致。".into()));
-                }
-                let mix = if native_media.info.audio_streams.iter().all(|a| a.channels == 1) { "Mono" } else { "Stereo" };
-                // The same checked container-index/native-ordinal map used by
-                // recognition and audition gates draft placement of every stream.
-                s.execute("recognition.mapAudio", json!({"item":source_id.0,"media":media}))?;
-                let rate = video.frame_rate;
-                let duration = tick(media.get("duration_s").ok_or_else(|| EngineError::Other("缺少原片时长。".into()))?).map_err(EngineError::Other)?;
-                let ranges = intervals(result, rate, duration).map_err(EngineError::Other)?;
-                if ranges.is_empty() {
-                    return Err(EngineError::Other("没有可生成草稿的枪声候选；原始分析结果已保留。".into()));
-                }
-                let sequence = s.execute(
-                    "file.newSequence",
-                    json!({"name":"AI 原始草稿", "width":video.width, "height":video.height,
-                "fps":rate.num as f64 / rate.den as f64, "sampleRate":audio.sample_rate, "video":1, "audio":1,
-                "mix":mix}),
-                )?;
-                let sequence_id = sequence.get("sequence").and_then(Value::as_u64).ok_or_else(|| EngineError::Other("没有生成序列。".into()))?;
-                s.execute("source.open", json!({"item":source_id.0}))?;
-                let mut marker_count = 0usize;
-                for event in events {
-                    let start = tick(event.get("start_s").ok_or_else(|| EngineError::Other("事件缺少起点。".into()))?).map_err(EngineError::Other)?;
-                    let end = tick(event.get("end_s").ok_or_else(|| EngineError::Other("事件缺少终点。".into()))?).map_err(EngineError::Other)?;
-                    if start >= end || end > duration {
-                        return Err(EngineError::Other("AI 事件范围无效。".into()));
-                    }
-                    let comment = json!({"apexAiResult":result_id,"predictionId":result.get("prediction_id"),"event":event}).to_string();
-                    let already = s.project.item(source_id).and_then(|i| i.as_media()).is_some_and(|m| m.markers.iter().any(|m| m.comment == comment));
-                    if !already {
-                        let start = rate.snap_nearest(start).min(rate.snap(duration));
-                        let end = rate.snap_nearest(end).min(rate.snap(duration));
-                        s.execute(
-                            "markers.add",
-                            json!({"target":"source", "time":start.0, "durationFrames":rate.frame_at(end-start).max(0),
-                        "name":"AI 枪声候选", "comment":comment, "color":"Yellow"}),
-                        )?;
-                    }
-                    marker_count = marker_count.saturating_add(1);
-                }
-                let mut cursor = Tick::ZERO;
-                let mut mapping = Vec::new();
-                for range in &ranges {
-                    let duration = range.end - range.start;
-                    let placed = s.execute(
-                        "timeline.place",
-                        json!({"item":source_id.0,"track":"V1","audioTrack":"A1", "time":cursor.0,
-                    "sourceIn":range.start.0,"duration":duration.0,"insert":false,"video":true,"audio":true}),
-                    )?;
-                    mapping.push(json!({"sourceStart":range.start.0,"sourceEnd":range.end.0,"sourceStartSeconds":range.start.seconds(),
-                    "sourceEndSeconds":range.end.seconds(),"timelineStart":cursor.0,"timelineEnd":(cursor+duration).0,"clips":placed.get("clips")}));
-                    cursor += duration;
-                }
-                let metadata = json!({"result":result,"sourceItem":source_id.0,"sequence":sequence_id,"ranges":mapping});
-                let bytes = serde_json::to_vec_pretty(&metadata).map_err(|e| EngineError::Other(e.to_string()))?;
-                let mut evidence = std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(folder.join("ai-evidence.json"))
-                    .map_err(|e| EngineError::Other(format!("保存 AI 证据失败：{e}")))?;
-                evidence.write_all(&bytes).and_then(|()| evidence.sync_all()).map_err(|e| EngineError::Other(format!("保存 AI 证据失败：{e}")))?;
-                s.execute("file.saveCopy", json!({"path":original_path}))?;
-                s.execute("sequence.settings", json!({"name":"AI 编辑副本"}))?;
-                s.execute("file.saveAs", json!({"path":edit_path}))?;
-                s.execute("playhead.set", json!({"time":0}))?;
-                Ok(json!({"resultId":result_id,"sourceItem":source_id.0,"sequence":sequence_id,
-                "clipCount":ranges.len(),"eventCount":marker_count,"durationSeconds":cursor.seconds(),"durationFrames":rate.frame_at(cursor),
-                "frameRate":{"num":rate.num,"den":rate.den},"ranges":mapping,
-                "originalProject":original_path,"editProject":edit_path,"evidence":folder.join("ai-evidence.json")}))
-            })
-        }));
-        s.persistence = persistence;
-        let output = imported.map_err(|_| "生成草稿异常，已恢复原工程，分析结果已保留。".to_string()).and_then(|result| result.map_err(|e| e.to_string()));
-        if output.is_err() {
-            s.path = original_session_path;
-            s.saved_revision = saved_revision;
-        }
-        s.sync_persistence();
-        output
     }
 }

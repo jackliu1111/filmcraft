@@ -69,7 +69,19 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) -> Rect {
     let x = |seconds: f64| x0 + ((seconds - scroll) * pps) as f32;
     let p = ui.painter_at(area);
     p.rect_filled(area, 0.0, app.tokens.panel_bg);
-    p.text(pos2(area.left() + 6.0, area.top() + 10.0), Align2::LEFT_CENTER, "原片时间 · 不参与成片渲染", Tokens::ui(10.0), app.tokens.text_dim);
+    let (coordinate_time, corresponding) = crate::event_mapping::source_coordinates(app, ui, id, area, x0);
+    p.text(
+        pos2(area.left() + 6.0, area.top() + 10.0),
+        Align2::LEFT_CENTER,
+        format!("原片 {:.3}s · 参照", coordinate_time.seconds()),
+        Tokens::ui(10.0),
+        app.tokens.text_dim,
+    );
+    app.auto.add(
+        "recognition.coordinates",
+        Rect::from_min_max(area.min, pos2(area.right() - 80.0, area.top() + 20.0)),
+        &format!("原片 {:.3}s · {corresponding}", coordinate_time.seconds()),
+    );
     let status = record
         .as_ref()
         .map(|r| {
@@ -84,7 +96,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) -> Rect {
         .or_else(|| app.apex_ai.states.get(&id).cloned())
         .unwrap_or_else(|| "未分析".into());
     let label = Rect::from_min_max(pos2(x0, area.top()), pos2(area.right() - 80.0, area.top() + 20.0));
-    ui.painter_at(label).text(label.left_center(), Align2::LEFT_CENTER, format!("{name} · {status}"), Tokens::ui(11.0), app.tokens.text_dim);
+    ui.painter_at(label).text(label.left_center(), Align2::LEFT_CENTER, format!("{corresponding} · {name} · {status}"), Tokens::ui(11.0), app.tokens.text_dim);
     let analyze = Rect::from_min_size(pos2(area.right() - 74.0, area.top() + 1.0), vec2(68.0, 18.0));
     let r = ui.interact(analyze, ui.id().with("source-analysis"), Sense::click());
     app.auto.add("recognition.open", analyze, "声音识别");

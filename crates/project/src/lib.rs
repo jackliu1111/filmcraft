@@ -1265,6 +1265,9 @@ pub struct Project {
     /// Independent project-local source ranges, never model events or rendered clips.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub selection_ranges: BTreeMap<ItemId, Vec<SelectionRange>>,
+    /// Explicit assembly snapshots, including the protected original/copy association.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assemblies: Vec<selection::Assembly>,
     /// Search bins (File ▸ New ▸ Search Bin): saved Find queries listed in the Project panel.
     /// Schema v11.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1376,6 +1379,7 @@ impl Project {
             recognition: BTreeMap::new(),
             analysis_queue: std::sync::Arc::new(Vec::new()),
             selection_ranges: BTreeMap::new(),
+            assemblies: Vec::new(),
             search_bins: Vec::new(),
             source_graphics: BTreeMap::new(),
             narrations: BTreeMap::new(),

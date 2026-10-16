@@ -3526,7 +3526,9 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::analysis_queue::commands());
     v.extend(crate::selection::commands());
     v.extend(crate::selection_placement::commands());
+    v.extend(crate::assembly::commands());
     v.extend(crate::selection_usage::commands());
+    v.extend(crate::event_mapping::commands());
     v.extend(crate::settings::commands());
     v.extend(crate::mixer::commands());
     v.extend(crate::multicam::commands());
@@ -4442,6 +4444,9 @@ fn name_project(p: &mut filmcraft_project::Project, name: String) {
 }
 
 fn write_project(s: &mut Session, path: &str, adopt: bool) -> Result<Value> {
+    if crate::assembly::protected_original(&s.project, path) {
+        return Err(bad("file.save", "组稿原稿受保护，请另存为独立编辑副本"));
+    }
     let t0 = web_time::Instant::now();
     // Save As renames the project after its new file (not an edit: no undo step, not dirty).
     if adopt

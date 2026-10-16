@@ -582,6 +582,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             if volume_line {
                 super::timeline_volume::paint(&p, body, it);
             }
+            crate::event_mapping::paint_clip(app, ui, &p, r.track, it, body, start, dur, &layout);
             app.auto.add(&format!("timeline.clip.{}", it.id.0), body.intersect(content), &it.name);
             if previews.contains_key(&it.id) && seq.editing_track.as_ref().is_some_and(|target| target.video == r.track || target.audio.contains(&r.track)) {
                 app.auto.add(
@@ -1560,6 +1561,7 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
     }
     app.auto.add("timeline.timecode", tc_rect, &tc);
     app.auto.add("timeline.sequenceTime", tc_rect, &format!("{} {tc}", crate::i18n::t("Sequence time")));
+    crate::event_mapping::paint_coordinates(app, ui, rect, layout);
     // toolbar: 30 × 30 buttons, "on" = #4b4b4b fill
     let mut x = rect.min.x + 12.0;
     let y = rect.min.y + 26.0;

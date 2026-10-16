@@ -12,7 +12,7 @@
 //! - `ui.panel.show {panel}` / `ui.panel.close {panel}`
 //! - `ui.set {tts: {voice, pitch, pace, text…}}`: patch the Text to Speech panel draft
 //! - `ui.click {id | x,y, button?, count?, modifiers?}` / `ui.move {x,y}` / `ui.scroll {x,y,dx,dy}`
-//! - `ui.drag {from:{id|x,y}, to:{id|x,y}, steps?, modifiers?}`: synthetic press-move-release
+//! - `ui.drag {from:{id|x,y}, to:{id|x,y}, steps?, modifiers?, escapeAt?}`: press-move-release, optionally press Escape at a move step
 //! - `ui.key {key, command?, shift?, alt?, ctrl?}` / `ui.type {text}`
 //! - `ui.timeline.hit {x, y, modifiers?}`: what the timeline shows at a point (track, clip, edge,
 //!   time) and `kind`, the trim a press of the current tool with `modifiers` starts there
@@ -346,6 +346,13 @@ pub fn handle(app: &mut FilmcraftApp, ctx: &egui::Context, req: &ControlRequest)
                 (Err(e), _) | (_, Err(e)) => return err(e),
             };
             let steps = p.get("steps").and_then(Value::as_u64).unwrap_or(12).max(2);
+            let escape_at = match p.get("escapeAt") {
+                None => None,
+                Some(value) => match value.as_u64() {
+                    Some(step) if step > 0 && step <= steps => Some(step),
+                    _ => return err("`escapeAt` must be a move step from 1 through `steps`"),
+                },
+            };
             let m = modifiers(p);
             app.synthetic.push(egui::Event::ModifiersChanged(m));
             app.synthetic.push(egui::Event::PointerMoved(a));
@@ -353,6 +360,11 @@ pub fn handle(app: &mut FilmcraftApp, ctx: &egui::Context, req: &ControlRequest)
             for i in 1..=steps {
                 let f = i as f32 / steps as f32;
                 app.synthetic.push(egui::Event::PointerMoved(a + (b - a) * f));
+                if escape_at == Some(i) {
+                    for pressed in [true, false] {
+                        app.synthetic.push(egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE });
+                    }
+                }
             }
             app.synthetic.push(egui::Event::PointerButton { pos: b, button: egui::PointerButton::Primary, pressed: false, modifiers: m });
             app.synthetic.push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
