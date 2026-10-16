@@ -11,6 +11,7 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable))]
 
 pub mod aaf_omf;
+mod assembly;
 pub mod autosave;
 pub mod captions;
 pub mod clip_ops;
@@ -613,13 +614,16 @@ impl Session {
     /// channel send; serialization happens on the worker). Called after every command.
     pub fn sync_persistence(&mut self) {
         let dirty = self.is_dirty();
+        // Original baselines may be viewed or edited provisionally, but auto-save must never
+        // overwrite them. Unsaved edits can still enter the recovery ring under an untitled path.
+        let path = self.path.as_ref().filter(|p| !assembly::protected_original(&self.project, p)).cloned();
         let Some(p) = self.persistence.as_mut() else { return };
-        let cur = autosave::Sent { revision: self.revision, saved_revision: self.saved_revision, path: self.path.clone() };
+        let cur = autosave::Sent { revision: self.revision, saved_revision: self.saved_revision, path: path.clone() };
         if p.last_sent.as_ref() == Some(&cur) {
             return;
         }
         if dirty {
-            p.send_dirty(self.project.clone(), self.revision, self.path.clone());
+            p.send_dirty(self.project.clone(), self.revision, path);
         } else {
             p.send_clean();
         }
@@ -1350,3 +1354,5 @@ mod selection_tests;
 
 #[cfg(test)]
 mod selection_placement_tests;
+#[cfg(test)]
+mod assembly_tests;

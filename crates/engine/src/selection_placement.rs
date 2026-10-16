@@ -40,7 +40,7 @@ mod signature_hex {
 fn invalid(message: impl Into<String>) -> EngineError {
     bad("selection.place", message)
 }
-fn source_signature(s: &Session, item: ItemId) -> Result<u64> {
+pub(crate) fn source_signature(s: &Session, item: ItemId) -> Result<u64> {
     let source = s.project.item(item).and_then(|i| i.as_media()).ok_or_else(|| invalid("原片不存在"))?;
     if source.offline {
         return Err(invalid("原片离线，不能加入剪辑轨"));
