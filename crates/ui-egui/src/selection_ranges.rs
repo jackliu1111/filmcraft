@@ -39,6 +39,22 @@ pub struct State {
 fn key(item: ItemId, id: &str, part: &str) -> egui::Id {
     egui::Id::new(("selection-range", item.0, id, part))
 }
+fn event_span(app: &FilmcraftApp, item: ItemId, range: &SelectionRange) -> Option<TimeRange> {
+    if range.manual {
+        return None;
+    }
+    let result = &app.session.project.recognition.get(&item)?["result"];
+    if range.result_id.as_deref() != result["result_id"].as_str() {
+        return None;
+    }
+    let events =
+        result.pointer(&format!("/categories/{}/events", range.category)).or_else(|| (range.category == "gunshot").then_some(&result["events"]))?.as_array()?;
+    let (_, event) = events.iter().enumerate().find(|(index, e)| {
+        let id = e["event_id"].as_str().map(str::to_string).unwrap_or_else(|| format!("e{}", index + 1));
+        range.event_ids.contains(&id)
+    })?;
+    Some(TimeRange::from_bounds(Tick::from_seconds_f64(event["start_s"].as_f64()?), Tick::from_seconds_f64(event["end_s"].as_f64()?)))
+}
 fn seek(app: &mut FilmcraftApp, item: ItemId, time: Tick) {
     app.stop_source();
     if app.session.state.source_item != Some(item) {
@@ -122,6 +138,12 @@ pub fn handle_keys(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
         return false;
     }
     let Some(selected) = app.selection_ranges.selected.clone() else { return false };
+    let owns_focus =
+        ctx.memory(|m| m.focused()).is_some_and(|id| ["body", "start", "end"].iter().any(|part| key(selected.item, &selected.range_id, part) == id));
+    if !owns_focus {
+        app.selection_ranges.focused = false;
+        return false;
+    }
     let mods = ctx.input(|i| i.modifiers);
     if mods.command && ctx.input_mut(|i| i.consume_key(mods, egui::Key::Z)) {
         app.selection_ranges.drag = None;
@@ -233,6 +255,10 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, item: ItemId, category: &
     }
     let Ok(mut ranges) = filmcraft_engine::selection::ranges(&app.session, item) else { return };
     let selected = app.selection_ranges.selected.as_ref().map(|s| s.range_id.clone());
+    let hovered_event = ctx.pointer_hover_pos().filter(|p| row.contains(*p)).and_then(|pointer| {
+        let time = Tick::from_seconds_f64(scroll + (pointer.x - x0) as f64 / pps);
+        ranges.iter().filter(|r| r.category == category).find(|r| event_span(app, item, r).is_some_and(|span| span.contains(time))).map(|r| r.range_id.clone())
+    });
     ranges.sort_by_key(|r| selected.as_ref() == Some(&r.range_id));
     let x = |t: Tick| x0 + ((t.seconds() - scroll) * pps) as f32;
     let blank = ui.interact(row, egui::Id::new(("selection-create", item.0, category)), Sense::click_and_drag());
@@ -279,28 +305,22 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, item: ItemId, category: &
             ui.painter().rect_stroke(band, 2.0, Stroke::new(1.0, Color32::LIGHT_BLUE), StrokeKind::Inside);
         }
         let middle = (a + b) * 0.5;
-        let body = Rect::from_min_max(pos2((a + 6.0).min(middle).max(row.left()), row.top()), pos2((b - 6.0).max(middle).min(row.right()), row.bottom()));
+        let core = event_span(app, item, range);
+        let (body_start, body_end) =
+            if active || range.manual { (a + 6.0, b - 6.0) } else { core.map(|span| (x(span.start), x(span.end()))).unwrap_or((a + 6.0, b - 6.0)) };
+        let (body_start, body_end) = if active || range.manual { (body_start.min(middle), body_end.max(middle)) } else { (body_start, body_end) };
+        let body = Rect::from_min_max(pos2(body_start.max(row.left()), row.top()), pos2(body_end.min(row.right()), row.bottom()));
+        let mut body_hovered = false;
         if body.is_positive() {
-            let response = ui.interact(body, key(item, &range.range_id, "body"), Sense::click_and_drag());
+            let sense = if active && hovered_event.as_ref().is_some_and(|id| id != &range.range_id) { Sense::hover() } else { Sense::click_and_drag() };
+            let response = ui.interact(body, key(item, &range.range_id, "body"), sense);
+            body_hovered = response.hovered();
             app.auto.add(&format!("selection.{}.{}.body", category, range.range_id), body, "待剪范围主体；[ / ] 选择边界，方向键调整，Tab 切换，Escape 取消");
             if response.clicked() || response.has_focus() {
                 focus(app, &ctx, item, range, "body");
             }
             if response.clicked() {
-                let time = app
-                    .session
-                    .project
-                    .recognition
-                    .get(&item)
-                    .and_then(|r| {
-                        let events = r["result"]
-                            .pointer(&format!("/categories/{category}/events"))
-                            .or_else(|| (category == "gunshot").then_some(&r["result"]["events"]))?
-                            .as_array()?;
-                        let event = events.iter().find(|e| e["event_id"].as_str().is_some_and(|id| range.event_ids.iter().any(|v| v == id)))?;
-                        event["start_s"].as_f64().map(Tick::from_seconds_f64)
-                    })
-                    .unwrap_or(span.start);
+                let time = core.map_or(span.start, |event| event.start);
                 seek(app, item, time);
             }
             response.on_hover_text(format!(
@@ -309,6 +329,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, item: ItemId, category: &
                 span.start.seconds(),
                 span.end().seconds()
             ));
+        }
+        if !active && !body_hovered {
+            continue;
         }
         for (part, edge, at) in [("start", RangeEdge::In, a), ("end", RangeEdge::Out, b)] {
             if at < row.left() || at > row.right() {

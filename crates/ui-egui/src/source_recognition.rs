@@ -177,8 +177,8 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) -> Rect {
                     response.on_hover_text(format!("{name} · 原片 {start:.2}–{end:.2} 秒\n所选分析音轨的声音候选，不表示说话人身份或转写\n单击定位原片预览"));
                 }
             }
+            crate::selection_ranges::show(app, ui, id, category, Rect::from_min_max(pos2(x0, y), pos2(area.right(), y + 24.0)), x0, pps, scroll);
         }
-        crate::selection_ranges::show(app, ui, id, "gunshot", Rect::from_min_max(pos2(x0, y), pos2(area.right(), y + 24.0)), x0, pps, scroll);
     }
     let play = app.session.state.source_playhead.seconds();
     let play_x = x(play);
