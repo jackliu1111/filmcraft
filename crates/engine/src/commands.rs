@@ -369,6 +369,12 @@ fn move_clips(s: &mut Session, p: &Value) -> Result<Value> {
     if listed.is_empty() {
         return Err(bad(CMD, "need `moves`"));
     }
+    if !new_moves.is_empty() && s.active_sequence().is_some_and(|q| listed.iter().any(|m| crate::contiguous_edit::is_target(q, m.0))) {
+        return Err(bad(CMD, "drop associated editing units inside their editing row"));
+    }
+    if let Some(result) = crate::contiguous_edit::move_units(s, &listed, bool_p(p, "copy").unwrap_or(false))? {
+        return Ok(result);
+    }
     let follow = bool_p(p, "linked").unwrap_or(s.state.linked_selection);
     let q = s.active_sequence().ok_or(EngineError::NoSequence)?;
     // (clip, destination track, new start, where a partner starts now). `time` is any i64: the
@@ -539,6 +545,7 @@ pub fn audio_effect_targets(s: &Session, clips: &[ClipId]) -> Vec<ClipId> {
 /// selection). Split edits (audio cut at another time) and unlinked clips are not added.
 pub fn linked_roll_pairs(seq: &filmcraft_project::Sequence, left: ClipId, right: ClipId, follow_links: bool) -> Vec<(ClipId, ClipId)> {
     let mut pairs = vec![(left, right)];
+    let follow_links = follow_links || crate::contiguous_edit::is_target(seq, left) || crate::contiguous_edit::is_target(seq, right);
     if !follow_links {
         return pairs;
     }
@@ -589,7 +596,7 @@ pub fn with_links(s: &Session, clips: &[ClipId]) -> Vec<ClipId> {
             }
         }
     }
-    out
+    crate::contiguous_edit::selection(seq, &out)
 }
 
 /// The delta a trim of `clips` (a clip and its linked partners) can apply together: `delta`
@@ -619,6 +626,9 @@ fn clamp_trim_linked(q: &filmcraft_project::Sequence, clips: &[ClipId], edge: Ed
 /// trim drag shows this, so the edge stops at the end of the media or the neighbouring clip
 /// instead of following the pointer past it (#653).
 pub fn trim_delta(s: &Session, clip: ClipId, edge: Edge, mode: TrimMode, delta: Tick) -> Result<Tick> {
+    if let Some(plan) = crate::contiguous_edit::trim_plan(s, clip, edge, delta)? {
+        return Ok(plan.delta);
+    }
     let q = s.active_sequence().ok_or(EngineError::NoSequence)?;
     let durations = |id: ItemId| crate::media_duration(&s.project, &s.media, id);
     let starts = |id: ItemId| crate::media_start(&s.project, id);
@@ -1727,6 +1737,9 @@ fn build() -> Vec<CommandSpec> {
             }
             // An Alt selection is already exact; explicit targets keep the command's linked behavior.
             let sel = if p.get("clips").is_some() || p.get("clip").is_some() { with_links(s, &clips_p(s, p)) } else { s.state.selection.clone() };
+            if let Some(result) = crate::contiguous_edit::delete(s, &sel)? {
+                return Ok(result);
+            }
             s.edit_sequence("Clear", |q, _, st| {
                 edit::delete_items(q, &sel);
                 st.selection.clear();
@@ -1745,6 +1758,9 @@ fn build() -> Vec<CommandSpec> {
                 return crate::captions::delete(s, &caps, true);
             }
             let sel = if p.get("clips").is_some() || p.get("clip").is_some() { with_links(s, &clips_p(s, p)) } else { s.state.selection.clone() };
+            if let Some(result) = crate::contiguous_edit::delete(s, &sel)? {
+                return Ok(result);
+            }
             s.edit_sequence("Ripple Delete", |q, _, st| {
                 let spans = edit::ripple_delete_items(q, &sel)?;
                 if st.ripple_sequence_markers {
@@ -2666,6 +2682,9 @@ fn build() -> Vec<CommandSpec> {
         query!("timeline.planPlacement", "Preview Clip Placement", r#"{same single-item parameters as timeline.place; existing tracks only}"#, |s, p| {
             preview_placement(s, p)
         }),
+        query!("timeline.planEdit", "Preview Editing Unit Change", r#"{"action":"trim|move",same params as timeline.trim or timeline.move}"#, |s, p| {
+            crate::contiguous_edit::query(s, p)
+        }),
         cmd!(
             "timeline.place",
             "Place Clip",
@@ -2685,6 +2704,7 @@ fn build() -> Vec<CommandSpec> {
             let clips: Vec<ClipId> =
                 p.get("clips").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_u64().map(ClipId)).collect()).unwrap_or_default();
             let clips = if bool_p(p, "linked").unwrap_or(true) { with_links(s, &clips) } else { clips };
+            let clips = s.active_sequence().map(|q| crate::contiguous_edit::selection(q, &clips)).unwrap_or(clips);
             // selecting clips leaves trim mode (Premiere: clip and edit point selections are exclusive)
             s.state.edit_points.clear();
             s.state.trim_shift = Default::default();
@@ -2739,6 +2759,9 @@ fn build() -> Vec<CommandSpec> {
                     .or_else(|| p.get("deltaFrames").and_then(Value::as_i64).map(|f| s.sequence_rate().tick_of(f)))
                     .unwrap_or_default();
                 let clips = with_links(s, &[c]);
+                if let Some(result) = crate::contiguous_edit::trim(s, c, edge, d)? {
+                    return Ok(result);
+                }
                 let applied = s.edit_sequence(if mode == TrimMode::Ripple { "Ripple Trim" } else { "Trim" }, |q, ctx, st| {
                     if q.find_item(c).is_some_and(|(t, _)| q.track(t).is_some_and(|tr| tr.locked)) {
                         return Err(edit::EditError::Locked.into());
@@ -2855,6 +2878,8 @@ fn build() -> Vec<CommandSpec> {
                 clip_p(p, "left").ok_or_else(|| bad("timeline.roll", "need `left`"))?,
                 clip_p(p, "right").ok_or_else(|| bad("timeline.roll", "need `right`"))?,
             );
+            crate::contiguous_edit::trim_plan(s, l, Edge::Out, Tick::ZERO)?;
+            crate::contiguous_edit::trim_plan(s, r, Edge::In, Tick::ZERO)?;
             let d = p
                 .get("delta")
                 .and_then(Value::as_i64)
@@ -2865,6 +2890,12 @@ fn build() -> Vec<CommandSpec> {
             let follow = s.state.linked_selection && p.get("followLinks").and_then(Value::as_bool).unwrap_or(true);
             let (x, n, linked) = s.edit_sequence("Rolling Edit", |q, ctx, _| {
                 let pairs = linked_roll_pairs(q, l, r, follow);
+                if crate::contiguous_edit::is_target(q, l) || crate::contiguous_edit::is_target(q, r) {
+                    let units = crate::contiguous_edit::selection(q, &[l, r]);
+                    if units.iter().any(|id| !pairs.iter().any(|(a, b)| a == id || b == id)) {
+                        return Err(bad("timeline.roll", "use a regular trim where associated audio does not share both sides of the cut"));
+                    }
+                }
                 let linked = pairs.len() > 1;
                 let mut d = d;
                 for &(pl, pr) in &pairs {
