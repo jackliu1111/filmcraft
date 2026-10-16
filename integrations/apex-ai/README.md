@@ -1,6 +1,6 @@
 # Apex AI 接入：FilmCraft 工作目录入口
 
-2026-10-16。本目录提供共享分析引擎的路径入口和迁移前原生接入资料。当前 FilmCraft Rust 主源码仍是新上游底座，旧 AI 补丁尚未应用；不能仅因本目录存在就宣称原生 AI 界面已经接通。
+2026-10-16。本目录提供当前共享分析引擎入口及迁移前参考资料。原生接入、选片与恢复实现和验收见[当前记录](../../docs/ai-selection/implementation/README.md)。
 
 ## 共享引擎
 
@@ -27,13 +27,21 @@ Python 模型核心仍在外部 Apex 仓库，不复制第二份到 FilmCraft。
 | APEX_ENGINE_PYTHON、APEX_CHECKPOINT | 由现有引擎配置解析 |
 | APEX_FFMPEG、APEX_FFPROBE | 由现有引擎配置解析 |
 
-## 原生基线与下一步
+## 已存分析关联的只读核对
+
+```sh
+../apex-voice-detect/.venv-pretrainedsed/bin/python integrations/apex-ai/bridge.py validate --input "/绝对路径/录像.mkv" --audio-stream 1 --result-id COMPLETED_PREDICTION_ID
+```
+
+此入口只核对精确关联、完成任务、完整分数和共享核心当前身份，不提交推理；失败输出 error，没有分析 fallback。成功输出 validation，不替换工程中的人工工作。结果缺失或损坏时，原生界面保留已保存事件并提供核对／主动重新分析。仍遵守单 worker 和服务目录锁。详细边界及命令见 [#31](../../docs/ai-selection/implementation/31.md)。
+
+## 原生接入与历史参考
 
 [reference/apex-ai.patch](reference/apex-ai.patch)及[原上游信息](reference/upstream.json)对应 v0.7.2 的 `71438c627`，保留原生菜单、任务进度、取消、事件标记和原稿／副本实现。当前 FilmCraft 底座为 `c2f65871`，先核对适配，不能使用旧脚本重置或重新克隆本仓库。
 
-已执行补丁预检：旧补丁无法直接应用到当前底座，冲突位于 `crates/ui-egui/src/lib.rs` 和 `menus.rs`。本轮保留参考补丁，原生 AI 功能仍待适配。
+原生 AI 功能现已在正常源码实现；历史补丁仅供迁移对照，不需要再次应用。
 
-迁移前的有界验证见[原生接入基线](../../docs/ai-selection/integration-baseline.md)。后续先把旧接入适配为正常源码，再按[工单](../../docs/ai-selection/tickets/README.md)实现分析展示和连续剪辑轨。普通素材路径可以并行推进。
+迁移前的有界验证见[原生接入基线](../../docs/ai-selection/integration-baseline.md)。当前工作按[工单](../../docs/ai-selection/tickets/README.md)及实现验收记录推进。
 
 当前原生启动继续使用仓库现有命令：
 
@@ -41,7 +49,7 @@ Python 模型核心仍在外部 Apex 仓库，不复制第二份到 FilmCraft。
 cargo run -p filmcraft -- --empty
 ```
 
-该命令启动当前编辑器，不承诺已经出现旧原型中的“AI 剪辑”按钮。旧 build.sh、run.sh 和 macOS 打包脚本绑定原 Apex 目录，本次没有作为新仓库启动入口复制。
+该命令启动当前原生编辑器；分析功能还需正确配置共享模型环境。旧 build.sh、run.sh 和 macOS 打包脚本绑定原 Apex 目录，本次没有作为新仓库启动入口复制。
 
 ## 验证
 

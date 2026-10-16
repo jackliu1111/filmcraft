@@ -82,7 +82,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) -> Rect {
         Rect::from_min_max(area.min, pos2(area.right() - 80.0, area.top() + 20.0)),
         &format!("原片 {:.3}s · {corresponding}", coordinate_time.seconds()),
     );
-    let status = record
+    let mut status = record
         .as_ref()
         .map(|r| {
             let voice = &r["result"]["categories"]["voice"];
@@ -95,6 +95,11 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) -> Rect {
         })
         .or_else(|| app.apex_ai.states.get(&id).cloned())
         .unwrap_or_else(|| "未分析".into());
+    if let Some(recovery) = app.apex_ai.recovery.get(&id) {
+        if recovery["status"] != "valid" && recovery["status"] != "unanalyzed" {
+            status = format!("{} · {}", recovery["reason"].as_str().unwrap_or("分析关联待核对"), status);
+        }
+    }
     let label = Rect::from_min_max(pos2(x0, area.top()), pos2(area.right() - 80.0, area.top() + 20.0));
     ui.painter_at(label).text(label.left_center(), Align2::LEFT_CENTER, format!("{corresponding} · {name} · {status}"), Tokens::ui(11.0), app.tokens.text_dim);
     let analyze = Rect::from_min_size(pos2(area.right() - 74.0, area.top() + 1.0), vec2(68.0, 18.0));
@@ -162,7 +167,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) -> Rect {
             let events = category_record
                 .and_then(|v| v["events"].as_array())
                 .or_else(|| if category == "gunshot" { record.as_ref().and_then(|r| r["result"]["events"].as_array()) } else { None });
-            let message = if category == "voice" && unavailable {
+            let message = if record.is_none() {
+                app.apex_ai.states.get(&id).map(String::as_str).unwrap_or("未分析")
+            } else if category == "voice" && unavailable {
                 "暂无可用人声分数（需重新读取完整预测）"
             } else if events.is_some_and(Vec::is_empty) {
                 "分析完成 · 无候选事件"

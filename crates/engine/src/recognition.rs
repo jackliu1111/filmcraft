@@ -19,10 +19,16 @@ pub struct Jobs {
     pub pending: BTreeMap<u64, Origin>,
     pub imports: std::collections::VecDeque<ItemId>,
     pub incarnation: u64,
+    pub checked: BTreeMap<ItemId, String>,
 }
 impl Default for Jobs {
     fn default() -> Self {
-        Self { pending: BTreeMap::new(), imports: Default::default(), incarnation: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) }
+        Self {
+            checked: BTreeMap::new(),
+            pending: BTreeMap::new(),
+            imports: Default::default(),
+            incarnation: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
     }
 }
 static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -234,6 +240,24 @@ fn validate_intervals(values: &Value, duration: f64) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn check_saved_source(s: &Session, item: ItemId, result: &Value) -> Result<()> {
+    map_audio(s, item, &result["media"])?;
+    Ok(())
+}
+pub(crate) fn check_saved(s: &Session, item: ItemId, result: &Value) -> Result<()> {
+    let media = &result["media"];
+    let path = media["source"]["path"].as_str().ok_or_else(|| invalid("原片关联路径缺失"))?.to_string();
+    let origin = Origin {
+        item,
+        path,
+        audio: media["selected_audio"]["stream_index"].as_u64().ok_or_else(|| invalid("分析音轨缺失"))?,
+        identity: s.project.item(item).and_then(|i| i.as_media()).and_then(|m| m.identity),
+        size: media["source"]["size_bytes"].as_u64().ok_or_else(|| invalid("原片身份缺失"))?,
+        modified: media["source"]["mtime_ns"].as_u64().ok_or_else(|| invalid("原片身份缺失"))?,
+        mapping: None,
+    };
+    validate(s, &origin, result)
+}
 fn attach(s: &mut Session, p: &Value) -> Result<Value> {
     let token = token(p)?;
     let origin = s.recognition_jobs.pending.get(&token).ok_or_else(|| invalid("任务已取消或工程已切换"))?.clone();
@@ -252,11 +276,14 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
         Ok(())
     })?;
     s.recognition_jobs.pending.remove(&token);
+    s.recognition_jobs.checked.insert(origin.item, result["result_id"].as_str().unwrap_or_default().to_string());
     Ok(record)
 }
 pub fn commands() -> Vec<CommandSpec> {
     let make = |id, label, run, journal| CommandSpec { id, label, menu: &[], shortcut: None, params: "{}", enabled: always, run, journal };
     vec![
+        make("recognition.recovery", "查看分析关联恢复", |s, p| crate::recognition_recovery::inspect(s, p), false),
+        make("recognition.validated", "接收分析关联核对", crate::recognition_recovery::validated, false),
         make("recognition.mapAudio", "核对分析音轨映射", |s, p| map_audio(s, item(p)?, &p["media"]), false),
         make("recognition.begin", "开始声音识别", begin, false),
         make("recognition.attach", "关联声音识别", attach, true),

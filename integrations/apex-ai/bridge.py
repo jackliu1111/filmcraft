@@ -60,6 +60,9 @@ def main(argv=None):
     try:
         module = load_backend(backend_root(env))
         args = sys.argv[1:] if argv is None else argv
+        if args and args[0] == 'validate':
+            from recovery import main as validate
+            return validate(module, args, env, sys.stdout)
         if not args or args[0] != 'analyze':
             return module.main(args, env=env)
         output = CategorizedOutput(sys.stdout)
