@@ -239,3 +239,204 @@ fn multitrack_analysis_rejects_ambiguous_mapping_wrong_selection_and_unsupported
     assert_eq!(s.execute("recognition.inspect", json!({"item":5})).unwrap(), Value::Null);
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn analysis_queue_orders_deduplicates_and_cancels_without_taking_edit_undo() {
+    let (mut s, path) = recording();
+    let history = s.execute("history.list", json!({})).unwrap();
+    let first = s.execute("analysis.enqueue", json!({"item":5})).unwrap();
+    let same = s.execute("analysis.enqueue", json!({"item":5})).unwrap();
+    assert_eq!(first["id"], same["id"]);
+    let next = s.execute("analysis.next", json!({})).unwrap();
+    assert_eq!(next["id"], first["id"]);
+    let running = s.execute("analysis.start", json!({"job":first["id"],"attempt":first["attempt"]})).unwrap();
+    assert_eq!(running["status"], "probing");
+    assert!(s.execute("analysis.next", json!({})).unwrap().is_null());
+    s.execute("analysis.cancel", json!({"job":first["id"]})).unwrap();
+    assert!(s.execute("analysis.probed", json!({"job":first["id"],"attempt":first["attempt"],"media":result(&path)["media"]})).is_err());
+    assert_eq!(s.execute("history.list", json!({})).unwrap(), history);
+    assert!(s.execute("recognition.inspect", json!({"item":5})).unwrap().is_null());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn analysis_queue_skips_waiting_audio_then_attaches_only_the_correct_source_and_survives_failure_retry() {
+    let (mut s, path) = recording();
+    s.edit("Queue fixtures", |p, _| {
+        let original = p.item(ItemId(5)).unwrap().as_media().unwrap().clone();
+        *p.item_mut(ItemId(6)).unwrap().as_media_mut().unwrap() = original.clone();
+        let multi = p.item_mut(ItemId(5)).unwrap().as_media_mut().unwrap();
+        multi.info.audio_streams.push(original.info.audio_streams[0].clone());
+        Ok(())
+    })
+    .unwrap();
+    let first = s.execute("analysis.enqueue", json!({"item":5})).unwrap();
+    let second = s.execute("analysis.enqueue", json!({"item":6})).unwrap();
+    assert!(s.execute("analysis.start", json!({"job":second["id"],"attempt":1})).is_err(), "explicit claims must follow the same ready order");
+    s.execute("analysis.start", json!({"job":first["id"],"attempt":1})).unwrap();
+    let mut multi = result(&path)["media"].clone();
+    multi["audio_tracks"] = json!([
+        {"stream_index":1,"sample_rate":48000,"channels":2,"start_time_s":0.0},
+        {"stream_index":3,"sample_rate":48000,"channels":2,"start_time_s":0.0}]);
+    assert_eq!(s.execute("analysis.probed", json!({"job":first["id"],"attempt":1,"media":multi})).unwrap()["status"], "waiting_audio");
+    assert_eq!(s.execute("analysis.next", json!({})).unwrap()["id"], second["id"]);
+    s.execute("analysis.start", json!({"job":second["id"],"attempt":1})).unwrap();
+    s.execute("analysis.probed", json!({"job":second["id"],"attempt":1,"media":result(&path)["media"]})).unwrap();
+    assert_eq!(s.execute("analysis.start", json!({"job":second["id"],"attempt":1})).unwrap()["status"], "running");
+    s.execute("project.setMarks", json!({"item":6,"in":10})).unwrap();
+    let sequence = s.execute("sequence.inspect", json!({})).unwrap();
+    let complete = s.execute("analysis.complete", json!({"job":second["id"],"attempt":1,"result":result(&path)})).unwrap();
+    assert_eq!(complete["status"], "completed");
+    assert!(s.execute("recognition.inspect", json!({"item":5})).unwrap().is_null());
+    let completed_record = s.execute("recognition.inspect", json!({"item":6})).unwrap();
+    assert_eq!(completed_record["status"], "completed");
+    assert_eq!(s.execute("sequence.inspect", json!({})).unwrap(), sequence);
+    s.execute("analysis.selectAudio", json!({"job":first["id"],"attempt":1,"audioStream":3})).unwrap();
+    s.execute("analysis.start", json!({"job":first["id"],"attempt":1})).unwrap();
+    assert_eq!(s.execute("analysis.fail", json!({"job":first["id"],"attempt":1,"error":"bridge exited"})).unwrap()["status"], "failed");
+    let retried = s.execute("analysis.retry", json!({"job":first["id"]})).unwrap();
+    assert_eq!(retried["attempt"], 2);
+    assert_eq!(retried["status"], "queued");
+    assert!(s.execute("analysis.complete", json!({"job":first["id"],"attempt":1,"result":result(&path)})).is_err());
+    assert_eq!(s.execute("analysis.list", json!({})).unwrap().as_array().unwrap().len(), 2);
+    assert_eq!(s.execute("recognition.inspect", json!({"item":6})).unwrap(), completed_record);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn analysis_queue_reopens_interrupted_without_auto_dispatch_and_cancel_does_not_rewind_on_edit_undo() {
+    let (mut s, path) = recording();
+    let task = s.execute("analysis.enqueue", json!({"item":5})).unwrap();
+    s.execute("analysis.start", json!({"job":task["id"],"attempt":1})).unwrap();
+    s.execute("analysis.probed", json!({"job":task["id"],"attempt":1,"media":result(&path)["media"]})).unwrap();
+    s.execute("analysis.start", json!({"job":task["id"],"attempt":1})).unwrap();
+    let saved = format!("{path}.queue.fcproj");
+    s.execute("file.saveAs", json!({"path":saved})).unwrap();
+    let mut reopened = Session::default();
+    reopened.execute("file.open", json!({"path":saved})).unwrap();
+    let restored = reopened.execute("analysis.list", json!({})).unwrap();
+    assert_eq!(restored[0]["status"], "interrupted");
+    assert_eq!(restored[0]["previous_status"], "running");
+    assert!(reopened.execute("analysis.next", json!({})).unwrap().is_null());
+    assert!(reopened.execute("analysis.complete", json!({"job":task["id"],"attempt":1,"result":result(&path)})).is_err());
+    let retry = reopened.execute("analysis.retry", json!({"job":task["id"]})).unwrap();
+    assert_eq!(retry["attempt"], 2);
+    reopened.execute("project.setMarks", json!({"item":5,"in":20})).unwrap();
+    reopened.execute("analysis.cancel", json!({"job":task["id"]})).unwrap();
+    reopened.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(reopened.execute("analysis.list", json!({})).unwrap()[0]["status"], "cancelled");
+    reopened.execute("edit.redo", json!({})).unwrap();
+    assert_eq!(reopened.execute("analysis.list", json!({})).unwrap()[0]["status"], "cancelled");
+    std::fs::remove_file(saved).unwrap();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn analysis_queue_distinguishes_valid_zero_candidates_from_unavailable_and_keeps_results_after_retry_cancel() {
+    let (mut s, path) = recording();
+    let task = s.execute("analysis.enqueue", json!({"item":5})).unwrap();
+    s.execute("analysis.start", json!({"job":task["id"],"attempt":1})).unwrap();
+    s.execute("analysis.probed", json!({"job":task["id"],"attempt":1,"media":result(&path)["media"]})).unwrap();
+    s.execute("analysis.start", json!({"job":task["id"],"attempt":1})).unwrap();
+    let mut zero = result(&path);
+    zero["events"] = json!([]);
+    zero["candidates"] = json!([]);
+    assert_eq!(s.execute("analysis.complete", json!({"job":task["id"],"attempt":1,"result":zero})).unwrap()["status"], "completed");
+    let old = s.execute("recognition.inspect", json!({"item":5})).unwrap();
+    assert_eq!(old["result"]["events"], json!([]));
+    s.execute("analysis.retry", json!({"job":task["id"]})).unwrap();
+    s.execute("analysis.cancel", json!({"job":task["id"]})).unwrap();
+    assert_eq!(s.execute("recognition.inspect", json!({"item":5})).unwrap(), old);
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(s.execute("analysis.retry", json!({"job":task["id"]})).unwrap()["status"], "unavailable");
+    assert_eq!(s.execute("recognition.inspect", json!({"item":5})).unwrap(), old);
+}
+
+#[test]
+fn analysis_queue_marks_missing_runtime_unavailable_without_inventing_a_zero_result() {
+    let (mut s, path) = recording();
+    let task = s.execute("analysis.enqueue", json!({"item":5})).unwrap();
+    s.execute("analysis.start", json!({"job":task["id"],"attempt":1})).unwrap();
+    let state = s.execute("analysis.fail", json!({"job":task["id"],"attempt":1,"code":"backend_unavailable","error":"共享分析服务不存在"})).unwrap();
+    assert_eq!(state["status"], "unavailable");
+    assert_eq!(state["error"], "共享分析服务不存在");
+    assert!(s.execute("recognition.inspect", json!({"item":5})).unwrap().is_null());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn analysis_queue_updates_persist_without_invalidating_edit_previews() {
+    let (mut s, path) = recording();
+    let before = s.execute("project.inspect", json!({})).unwrap();
+    let edit_revision = before["editingRevision"].as_u64().expect("public edit-preview revision");
+    s.execute("analysis.enqueue", json!({"item":5})).unwrap();
+    let after = s.execute("project.inspect", json!({})).unwrap();
+    assert!(after["revision"].as_u64().unwrap() > before["revision"].as_u64().unwrap());
+    assert_eq!(after["editingRevision"], edit_revision);
+    s.execute("project.setMarks", json!({"item":5,"in":30})).unwrap();
+    assert!(s.execute("project.inspect", json!({})).unwrap()["editingRevision"].as_u64().unwrap() > edit_revision);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn analysis_queue_binds_the_persisted_source_identity_even_if_item_ids_are_reused() {
+    let (mut s, path) = recording();
+    let task = s.execute("analysis.enqueue", json!({"item":5})).unwrap();
+    std::fs::write(&path, b"different content and size").unwrap();
+    assert_eq!(
+        s.execute("analysis.start", json!({"job":task["id"],"attempt":1})).unwrap()["status"],
+        "unavailable",
+        "a queued job must not silently adopt a changed source"
+    );
+    let replacement = format!("{path}.replacement.mp4");
+    std::fs::write(&replacement, b"replacement recording").unwrap();
+    s.edit("Replace item with reused ID", |p, _| {
+        p.item_mut(ItemId(5)).unwrap().as_media_mut().unwrap().media = filmcraft_project::MediaRef::File { path: replacement.clone() };
+        Ok(())
+    })
+    .unwrap();
+    let new = s.execute("analysis.enqueue", json!({"item":5})).unwrap();
+    assert_ne!(new["id"], task["id"]);
+    let old_retry = s.execute("analysis.retry", json!({"job":task["id"]})).unwrap();
+    assert_eq!(old_retry["status"], "unavailable");
+    assert_eq!(old_retry["source_path"], path);
+    assert_eq!(s.execute("analysis.next", json!({})).unwrap()["id"], new["id"]);
+    assert_eq!(s.execute("analysis.start", json!({"job":new["id"],"attempt":1})).unwrap()["status"], "probing");
+    assert!(s.execute("analysis.probed", json!({"job":task["id"],"attempt":1,"media":result(&path)["media"]})).is_err());
+    std::fs::remove_file(path).unwrap();
+    std::fs::remove_file(replacement).unwrap();
+}
+
+#[test]
+fn analysis_queue_removed_running_source_invalidates_its_token_without_blocking_other_materials() {
+    let (mut s, path) = recording();
+    let other = format!("{path}.other.mp4");
+    std::fs::write(&other, b"independent source").unwrap();
+    s.edit("Independent source fixture", |p, _| {
+        let mut media = p.item(ItemId(5)).unwrap().as_media().unwrap().clone();
+        media.media = filmcraft_project::MediaRef::File { path: other.clone() };
+        *p.item_mut(ItemId(6)).unwrap().as_media_mut().unwrap() = media;
+        Ok(())
+    })
+    .unwrap();
+    let first = s.execute("analysis.enqueue", json!({"item":5})).unwrap();
+    let second = s.execute("analysis.enqueue", json!({"item":6})).unwrap();
+    s.execute("analysis.start", json!({"job":first["id"],"attempt":1})).unwrap();
+    s.execute("analysis.probed", json!({"job":first["id"],"attempt":1,"media":result(&path)["media"]})).unwrap();
+    s.execute("analysis.start", json!({"job":first["id"],"attempt":1})).unwrap();
+    s.edit("Remove imported item", |p, _| {
+        p.items.remove(&ItemId(5));
+        Ok(())
+    })
+    .unwrap();
+    assert!(s.execute("analysis.checkOrigin", json!({"job":first["id"]})).is_err());
+    assert_eq!(
+        s.execute("analysis.fail", json!({"job":first["id"],"attempt":1,"code":"source_changed","error":"原片已移除"})).unwrap()["status"],
+        "unavailable"
+    );
+    assert!(s.execute("analysis.complete", json!({"job":first["id"],"attempt":1,"result":result(&path)})).is_err());
+    assert_eq!(s.execute("analysis.next", json!({})).unwrap()["id"], second["id"]);
+    assert_eq!(s.execute("analysis.start", json!({"job":second["id"],"attempt":1})).unwrap()["status"], "probing");
+    std::fs::remove_file(path).unwrap();
+    std::fs::remove_file(other).unwrap();
+}
