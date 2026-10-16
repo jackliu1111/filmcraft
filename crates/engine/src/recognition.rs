@@ -102,23 +102,60 @@ fn validate(s: &Session, origin: &Origin, result: &Value) -> Result<()> {
         return Err(invalid("分析结果与原片时长不一致"));
     }
     for key in ["events", "candidates", "selection"] {
-        let Some(values) = result.get(key) else {
-            if key == "selection" {
-                continue;
+        if key == "selection" && result.get(key).is_none() {
+            continue;
+        }
+        validate_intervals(&result[key], duration)?;
+    }
+    if let Some(categories) = result.get("categories") {
+        let categories = categories.as_object().filter(|v| v.len() <= 2).ok_or_else(|| invalid("声音类别列表无效"))?;
+        for (name, category) in categories {
+            if !matches!(name.as_str(), "gunshot" | "voice") || !category.is_object() {
+                return Err(invalid("不支持的声音类别"));
             }
-            return Err(invalid("缺少候选或事件"));
-        };
-        let values = values.as_array().filter(|v| v.len() <= 20_000).ok_or_else(|| invalid("事件列表无效或过大"))?;
-        for v in values {
-            let start = v["start_s"].as_f64().filter(|v| v.is_finite() && *v >= 0.0);
-            let end = v["end_s"].as_f64().filter(|v| v.is_finite() && *v <= duration);
-            if !matches!((start,end), (Some(a),Some(b)) if a < b) {
-                return Err(invalid("候选或事件范围超出原片"));
+            let status = match category.get("status") {
+                None => "completed",
+                Some(value) => value.as_str().ok_or_else(|| invalid("声音类别状态无效"))?,
+            };
+            if !matches!(status, "completed" | "unavailable") {
+                return Err(invalid("声音类别状态无效"));
+            }
+            validate_intervals(&category["events"], duration)?;
+            if let Some(candidates) = category.get("candidates") {
+                validate_intervals(candidates, duration)?;
+            }
+            if status == "unavailable"
+                && (category["reason"].as_str().is_none_or(str::is_empty)
+                    || category["events"].as_array().is_none_or(|v| !v.is_empty())
+                    || category.get("candidates").and_then(Value::as_array).is_some_and(|v| !v.is_empty()))
+            {
+                return Err(invalid("不可用类别不得包含候选事件，必须说明原因"));
+            }
+            if name == "gunshot" && category["events"] != result["events"] {
+                return Err(invalid("分类枪声事件与原始枪声结果不一致"));
+            }
+            if name == "voice"
+                && let Some(policy) = category.get("postprocess")
+                && policy["version"].as_str() != Some("filmcraft-spoken-voice-v1")
+            {
+                return Err(invalid("不支持的人声后处理版本"));
             }
         }
     }
     Ok(())
 }
+fn validate_intervals(values: &Value, duration: f64) -> Result<()> {
+    let values = values.as_array().filter(|v| v.len() <= 20_000).ok_or_else(|| invalid("事件列表无效或过大"))?;
+    for value in values {
+        let start = value["start_s"].as_f64().filter(|v| v.is_finite() && *v >= 0.0);
+        let end = value["end_s"].as_f64().filter(|v| v.is_finite() && *v <= duration);
+        if !matches!((start,end), (Some(a),Some(b)) if a < b) {
+            return Err(invalid("候选或事件范围超出原片"));
+        }
+    }
+    Ok(())
+}
+
 fn attach(s: &mut Session, p: &Value) -> Result<Value> {
     let token = token(p)?;
     let origin = s.recognition_jobs.pending.get(&token).ok_or_else(|| invalid("任务已取消或工程已切换"))?.clone();
@@ -126,6 +163,7 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
     validate(s, &origin, result)?;
     let record = json!({"status":"completed", "audioStream":origin.audio, "sourcePath":origin.path, "result":result});
     s.edit("关联声音识别结果", |pr, _| {
+        crate::selection::initialize(pr, origin.item, result)?;
         pr.recognition.insert(origin.item, Arc::new(record.clone()));
         Ok(())
     })?;

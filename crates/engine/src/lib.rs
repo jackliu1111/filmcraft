@@ -48,6 +48,7 @@ pub mod relink;
 pub mod remix;
 pub mod scene_detect;
 pub mod scopes;
+pub mod selection;
 pub mod sequence_extras;
 pub mod sequence_tools;
 pub mod settings;
@@ -1341,3 +1342,6 @@ mod wasm_clock_tests;
 
 #[cfg(test)]
 mod recognition_tests;
+
+#[cfg(test)]
+mod selection_tests;
