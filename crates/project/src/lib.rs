@@ -21,8 +21,11 @@ pub mod mask;
 pub mod mixer;
 pub mod multicam;
 pub mod narration;
+pub mod selection;
 pub mod transcript;
 pub mod vtransition;
+
+pub use selection::SelectionRange;
 
 use std::collections::BTreeMap;
 
@@ -1254,6 +1257,9 @@ pub struct Project {
     /// Source-time analysis evidence. Display metadata, never renderable clips.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub recognition: BTreeMap<ItemId, std::sync::Arc<serde_json::Value>>,
+    /// Independent project-local source ranges, never model events or rendered clips.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub selection_ranges: BTreeMap<ItemId, Vec<SelectionRange>>,
     /// Search bins (File ▸ New ▸ Search Bin): saved Find queries listed in the Project panel.
     /// Schema v11.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1363,6 +1369,7 @@ impl Project {
             luts: Vec::new(),
             transcripts: BTreeMap::new(),
             recognition: BTreeMap::new(),
+            selection_ranges: BTreeMap::new(),
             search_bins: Vec::new(),
             source_graphics: BTreeMap::new(),
             narrations: BTreeMap::new(),

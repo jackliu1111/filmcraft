@@ -22,6 +22,7 @@ pub fn reserve(app: &FilmcraftApp, rect: Rect) -> Rect {
 
 /// Reserve workspace rows above the native editing tracks, preserving the existing dock layout.
 pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) -> Rect {
+    crate::selection_ranges::begin_frame(app);
     let id = reference(app);
     let Some(id) = id else { return rect };
     let Some(item) = app.session.project.item(id) else { return rect };
@@ -176,6 +177,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) -> Rect {
                     response.on_hover_text(format!("{name} · 原片 {start:.2}–{end:.2} 秒\n所选分析音轨的声音候选，不表示说话人身份或转写\n单击定位原片预览"));
                 }
             }
+            crate::selection_ranges::show(app, ui, id, category, Rect::from_min_max(pos2(x0, y), pos2(area.right(), y + 24.0)), x0, pps, scroll);
         }
     }
     let play = app.session.state.source_playhead.seconds();
