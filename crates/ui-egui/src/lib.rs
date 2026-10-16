@@ -54,6 +54,7 @@ pub mod perf;
 pub mod play_ahead;
 mod rtl;
 pub mod scrub;
+pub mod event_mapping;
 pub mod selection_drop;
 pub mod selection_ranges;
 mod shuttle;
