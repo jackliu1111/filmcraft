@@ -99,6 +99,13 @@ fn commit(app: &mut FilmcraftApp, drag: Drag) {
 }
 /// Called before application shortcuts. It owns keys only while a selection widget has focus.
 pub fn handle_keys(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
+    if crate::panels::source_drag_in_context(ctx).is_some_and(|source| source.selection.is_some())
+        && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        crate::panels::cancel_drag_context(ctx);
+        app.selection_ranges.cancelled = true;
+        return true;
+    }
     if app.dialog.is_some() {
         app.selection_ranges.drag = None;
         return false;
@@ -145,8 +152,19 @@ pub fn handle_keys(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
         return false;
     }
     let mods = ctx.input(|i| i.modifiers);
+    if mods.shift && !mods.command && !mods.ctrl && !mods.alt && ctx.input_mut(|i| i.consume_key(mods, egui::Key::Enter)) {
+        if app.selection_ranges.drag.is_none() && !ctx.input(|i| i.pointer.any_down()) {
+            if let Err(e) = crate::selection_drop::append(app, ctx, selected.item, &selected.range_id) {
+                app.ui.status = e;
+            }
+        }
+        return true;
+    }
     if mods.command && ctx.input_mut(|i| i.consume_key(mods, egui::Key::Z)) {
         app.selection_ranges.drag = None;
+        if crate::panels::source_drag_in_context(ctx).is_some_and(|s| s.selection.is_some()) {
+            crate::panels::cancel_drag_context(ctx);
+        }
         if let Err(e) = app.session.execute(if mods.shift { "edit.redo" } else { "edit.undo" }, json!({})) {
             app.ui.status = e.to_string();
         }
@@ -316,15 +334,24 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, item: ItemId, category: &
             let response = ui.interact(body, key(item, &range.range_id, "body"), sense);
             body_hovered = response.hovered();
             app.auto.add(&format!("selection.{}.{}.body", category, range.range_id), body, "待剪范围主体；[ / ] 选择边界，方向键调整，Tab 切换，Escape 取消");
-            if response.clicked() || response.has_focus() {
+            if response.clicked() || response.drag_started() || response.has_focus() {
                 focus(app, &ctx, item, range, "body");
+            }
+            if response.drag_started() && app.selection_ranges.drag.is_none() {
+                if let Err(e) = crate::selection_drop::begin(app, ui, item, &range.range_id) {
+                    app.ui.status = e;
+                }
+            }
+            let usage = crate::selection_drop::usage_label(app, item, span);
+            if active || body_hovered {
+                ui.painter().text(band.left_top() + egui::vec2(3.0, 2.0), egui::Align2::LEFT_TOP, &usage, Tokens::ui(9.0), Color32::WHITE);
             }
             if response.clicked() {
                 let time = core.map_or(span.start, |event| event.start);
                 seek(app, item, time);
             }
             response.on_hover_text(format!(
-                "{}待剪范围 {:.3}–{:.3} 秒\n[ 起点 / ] 终点 · ←/→ 一帧 · Shift 十帧 · Tab 下一范围 · 空格原片预览",
+                "{}待剪范围 {:.3}–{:.3} 秒\n[ 起点 / ] 终点 · ←/→ 一帧 · Shift 十帧 · Tab 下一范围 · 空格原片预览 · Shift+Enter 追加 · {usage}",
                 if range.manual { "手动" } else { "" },
                 span.start.seconds(),
                 span.end().seconds()

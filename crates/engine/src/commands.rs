@@ -840,7 +840,7 @@ pub(crate) fn ensure_audio_tracks(p: &mut Project, seq_id: ItemId, first: usize,
 }
 
 /// `timeline.place` for one item (`item`).
-fn place_one(s: &mut Session, p: &Value) -> Result<Value> {
+pub(crate) fn place_one(s: &mut Session, p: &Value) -> Result<Value> {
     if crate::sequence_tools::wants_new_track(p) {
         return crate::sequence_tools::place_on_new_tracks(s, p);
     }
@@ -3493,6 +3493,8 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::captions::commands());
     v.extend(crate::recognition::commands());
     v.extend(crate::selection::commands());
+    v.extend(crate::selection_placement::commands());
+    v.extend(crate::selection_usage::commands());
     v.extend(crate::settings::commands());
     v.extend(crate::mixer::commands());
     v.extend(crate::multicam::commands());

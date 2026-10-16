@@ -48,6 +48,8 @@ pub mod remix;
 pub mod scene_detect;
 pub mod scopes;
 pub mod selection;
+pub mod selection_placement;
+pub mod selection_usage;
 pub mod sequence_extras;
 pub mod sequence_tools;
 pub mod settings;
@@ -1342,3 +1344,6 @@ mod recognition_tests;
 
 #[cfg(test)]
 mod selection_tests;
+
+#[cfg(test)]
+mod selection_placement_tests;
