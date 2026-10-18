@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- PyInstaller loads the bundled Python framework and native extension DSOs.
+       Ad-hoc signatures have no shared Team ID; library validation otherwise
+       rejects these bundled libraries before the frozen service can start.
+       Apply this exception only to the AI service, never the editor/app. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>

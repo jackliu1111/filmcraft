@@ -33,6 +33,14 @@ before signing. The native editor is `Contents/MacOS/FilmCraft-core`; the
 Every real Mach-O is signed first, followed by enclosing framework/helper
 bundles, native core, launcher and app. Final verification uses
 `codesign --verify --strict --deep`; final signing does not use `--deep`.
+Only the frozen AI service receives `ai-service-entitlements.plist`'s
+`disable-library-validation` exception: its bundled Python framework and native
+extensions have ad-hoc signatures without a shared Team ID. The editor and app
+retain their existing entitlements. After strict verification, packaging runs
+the signed service's `--check-runtime` with external
+`<target>/macos-package/ai-signing-smoke` data before producing the DMG. Loader
+failure aborts packaging even when static signature verification succeeds;
+this check does not import the model.
 Manifest digests describe the staged runtime before code signing changes native
 bytes. The existing signing/notarization environment variables and defaults
 still apply; default ad-hoc signatures are for local testing. Developer ID
@@ -53,6 +61,11 @@ with spaces, Unicode, shell punctuation and newlines are passed literally.
 After validation, native data uses `<selected>/filmcraft`; model caches and all
 temporary paths use subdirectories of the selected folder. The bundle remains
 read-only. `--help` and `--version` work without selecting or mounting data.
+Data paths inside any part of the enclosing `.app` are rejected before cache
+or temporary directories are created, including runtime ancestors and sibling
+resources. Explicit `FILMCRAFT_APEX_PYTHON` or `FILMCRAFT_APEX_BRIDGE` selects
+the native developer entry before frozen-runtime preflight. This path retains
+the caller's data/cache/native options and does not require the bundled service.
 The normal headless CLI zip remains separate from the app's AI resources.
 
 Public command/launcher tests:
@@ -79,3 +92,13 @@ inspection of the staged runtime on 2026-10-18 found 240 native files and a
 27.0 minimum (the supplied FFmpeg build requires macOS 27.0). Actual
 external-volume packaging, relocation, inference,
 cancellation and native launch are S3 acceptance work, recorded separately.
+
+Review-fix TDD (2026-10-18): first reproduced writes from startup/probe into
+runtime ancestors within a real `.app` layout, then verified startup/probe/
+analyze/validate all reject internal data locations without changing the bundle
+tree. Developer overrides first failed on a missing frozen service; they now
+reach the native process with arguments and explicit options intact, while
+ordinary packaged startup still rejects the missing service. The public signing
+smoke CLI's controlled loader-failure test first failed because the command was
+absent, then passed with the error propagated to the packaging caller. These
+process fixtures are separate from actual signing and model acceptance.

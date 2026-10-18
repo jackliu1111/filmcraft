@@ -14,6 +14,20 @@ LAUNCHER = ROOT / 'packaging/macos/ai-launcher.sh'
 
 
 class PackageTests(unittest.TestCase):
+    def test_signed_runtime_smoke_surfaces_loader_failure_before_distribution(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            runtime = root / 'FilmCraft AI.app/Contents/Resources/ai-runtime'
+            service = runtime / 'service/filmcraft-ai'
+            service.parent.mkdir(parents=True)
+            service.write_text('#!/bin/bash\necho "signed Python loader rejected: different Team IDs" >&2\nexit 255\n')
+            service.chmod(0o755)
+            result = subprocess.run([sys.executable, str(ROOT / 'packaging/macos/ai-package.py'),
+                                     'smoke', str(runtime), '--data', str(root / 'ai-signing-smoke')],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('different Team IDs', result.stderr)
+
     def test_ai_architecture_mismatch_stops_before_resource_or_build_work(self):
         for arch in ('universal', 'x86_64'):
             with self.subTest(arch=arch), tempfile.TemporaryDirectory() as temp:

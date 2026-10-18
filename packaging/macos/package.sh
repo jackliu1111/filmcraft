@@ -141,13 +141,23 @@ if [ -n "$AI_RUNTIME" ]; then
   # Materialize the inventory so an inventory failure cannot be lost in process substitution.
   python3 "$HERE/ai-package.py" signing-paths "$APP/Contents/Resources/ai-runtime" > "$WORK/ai-signing-paths"
   while IFS= read -r -d '' nested; do
-    sign --options runtime "$nested"
+    if [ "$nested" = "$APP/Contents/Resources/ai-runtime/service/filmcraft-ai" ]; then
+      sign --options runtime --entitlements "$HERE/ai-service-entitlements.plist" "$nested"
+    else
+      sign --options runtime "$nested"
+    fi
   done < "$WORK/ai-signing-paths"
   sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP/Contents/MacOS/FilmCraft-core"
 fi
 sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP/Contents/MacOS/FilmCraft"
 sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP"
 codesign --verify --strict --deep --verbose=2 "$APP"
+if [ -n "$AI_RUNTIME" ]; then
+  # A valid signature alone does not prove hardened Python can load its libraries.
+  # WORK was verified as external storage before any package work began.
+  mkdir -p "$WORK/ai-signing-smoke"
+  python3 "$HERE/ai-package.py" smoke "$APP/Contents/Resources/ai-runtime" --data "$WORK/ai-signing-smoke"
+fi
 
 if [ "$NOTARIZE" = 1 ]; then
   ditto -c -k --keepParent "$APP" "$WORK/FilmCraft-notarize.zip"
