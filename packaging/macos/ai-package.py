@@ -133,7 +133,7 @@ def main():
     inspection.add_argument('runtime', type=Path)
     listing = sub.add_parser('signing-paths')
     listing.add_argument('runtime', type=Path)
-    smoke = sub.add_parser('smoke', help='Start the signed frozen service without importing the model')
+    smoke = sub.add_parser('smoke', help='Start the signed AI service and media tools without importing the model')
     smoke.add_argument('runtime', type=Path)
     smoke.add_argument('--data', type=Path, required=True,
                        help='Existing external data directory for the startup check')
@@ -144,10 +144,13 @@ def main():
         elif args.command == 'inspect':
             print(json.dumps(inspect_runtime(args.runtime)))
         elif args.command == 'smoke':
-            subprocess.run([str(args.runtime / 'service/filmcraft-ai'), '--check-runtime'],
-                           env=os.environ | {'APEX_AI_DATA_DIR': str(args.data),
-                                             'FILMCRAFT_AI_DATA_DIR': str(args.data)},
-                           check=True, timeout=60)
+            for relative, argument in (('service/filmcraft-ai', '--check-runtime'),
+                                       ('service/_internal/bin/ffmpeg', '-version'),
+                                       ('service/_internal/bin/ffprobe', '-version')):
+                subprocess.run([str(args.runtime / relative), argument],
+                               env=os.environ | {'APEX_AI_DATA_DIR': str(args.data),
+                                                 'FILMCRAFT_AI_DATA_DIR': str(args.data)},
+                               check=True, timeout=60)
         else:
             # First sign each real Mach-O, then deepest framework/app bundles, then their parents.
             files, bundles = [], []

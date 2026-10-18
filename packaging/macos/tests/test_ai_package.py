@@ -14,6 +14,32 @@ LAUNCHER = ROOT / 'packaging/macos/ai-launcher.sh'
 
 
 class PackageTests(unittest.TestCase):
+    def test_signed_runtime_smoke_checks_bundled_media_loaders_before_distribution(self):
+        for broken in ('ffmpeg', 'ffprobe', None):
+            with self.subTest(broken=broken), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                runtime = root / 'FilmCraft AI.app/Contents/Resources/ai-runtime'
+                programs = (('service/filmcraft-ai', '--check-runtime'),
+                            ('service/_internal/bin/ffmpeg', '-version'),
+                            ('service/_internal/bin/ffprobe', '-version'))
+                for relative, argument in programs:
+                    program = runtime / relative
+                    program.parent.mkdir(parents=True, exist_ok=True)
+                    program.write_text('#!/bin/bash\n[ "$1" = ' + argument + ' ] || exit 91\n' +
+                                       ('echo "media loader rejected: different Team IDs" >&2\nexit 255\n'
+                                        if program.name == broken else 'echo "' + program.name + ':' + argument + '"\n'))
+                    program.chmod(0o755)
+                result = subprocess.run([sys.executable, str(ROOT / 'packaging/macos/ai-package.py'),
+                                         'smoke', str(runtime), '--data', str(root / 'ai-signing-smoke')],
+                                        capture_output=True, text=True, timeout=10)
+                if broken:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('different Team IDs', result.stderr)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.splitlines(), [
+                        'filmcraft-ai:--check-runtime', 'ffmpeg:-version', 'ffprobe:-version'])
+
     def test_signed_runtime_smoke_surfaces_loader_failure_before_distribution(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
