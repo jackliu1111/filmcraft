@@ -1,5 +1,8 @@
 """Public packaging/launch contracts, using tiny OS-process boundary fixtures."""
+import json
 import os
+import shutil
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
@@ -41,6 +44,27 @@ class PackageTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(old.read_text(), 'previous package')
             self.assertFalse(dist.exists())
+
+
+@unittest.skipUnless(sys.platform == 'darwin' and shutil.which('clang'), 'macOS native tools required')
+class RuntimeInspectionTests(unittest.TestCase):
+    def test_inspection_reports_highest_embedded_arm64_deployment_version(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / 'main.c'
+            source.write_text('int main(void) { return 0; }\n')
+            runtime = root / 'ai-runtime'
+            runtime.mkdir()
+            low = runtime / 'service'
+            high = runtime / 'ffmpeg'
+            subprocess.run(['/usr/bin/clang', '-arch', 'arm64', '-mmacosx-version-min=11.0',
+                            str(source), '-o', str(low)], check=True, capture_output=True)
+            subprocess.run(['/usr/bin/vtool', '-set-build-version', 'macos', '27.0', '27.0',
+                            '-replace', '-output', str(high), str(low)], check=True, capture_output=True)
+            result = subprocess.run([sys.executable, str(ROOT / 'packaging/macos/ai-package.py'),
+                                     'inspect', str(runtime)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)['minimum_system_version'], '27.0')
 
 
 class LauncherTests(unittest.TestCase):

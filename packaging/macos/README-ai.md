@@ -17,7 +17,15 @@ APFS output locations. It verifies the manifest contract, required files,
 contained symlinks, arm64 native code, physical external backing, writable
 parents, and estimated free space before building or removing the previous
 package work directory. It rejects x86_64 and universal AI apps. The package
-flow without an AI runtime keeps the existing universal default.
+flow without an AI runtime keeps the existing universal default. AI preflight
+reads every embedded arm64 Mach-O deployment command and sets the app
+`LSMinimumSystemVersion` to their highest macOS requirement (at least 11.0).
+It does not infer support from the host version or SDK alone. Inspect an
+existing runtime without building, modifying it or importing model code:
+
+```sh
+python3 packaging/macos/ai-package.py inspect /absolute/path/to/ai-runtime
+```
 
 Runtime resources are copied to `FilmCraft.app/Contents/Resources/ai-runtime`
 before signing. The native editor is `Contents/MacOS/FilmCraft-core`; the
@@ -64,5 +72,10 @@ stopping native startup, literal remembered paths without terminal environment,
 argument preservation, override precedence, informational commands without data,
 and rejecting unsupported AI architectures. These small fixtures do not run
 model inference, mount a real external volume, invoke a folder dialog, or prove
-native code signing. Actual external-volume packaging, relocation, inference,
+native code signing. A separate public inspector test compiles tiny real
+arm64 executables targeting macOS 11.0 and 27.0, first failed because the
+inspector was absent, then passed with the reported maximum 27.0. Read-only
+inspection of the staged runtime on 2026-10-18 found 240 native files and a
+27.0 minimum (the supplied FFmpeg build requires macOS 27.0). Actual
+external-volume packaging, relocation, inference,
 cancellation and native launch are S3 acceptance work, recorded separately.

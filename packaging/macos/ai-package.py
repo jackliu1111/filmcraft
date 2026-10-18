@@ -5,8 +5,10 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
+import sys
 
 MAGICS = {bytes.fromhex(value) for value in ('cffaedfe', 'feedfacf', 'cefaedfe', 'feedface',
                                             'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca')}
@@ -55,12 +57,36 @@ def resources(root):
         path = root / expected[key]
         if not os.access(path, os.X_OK) or not native(path):
             raise ValueError('AI runtime program must be executable native code: ' + key)
-    for path in root.rglob('*'):
-        if native(path):
-            arches = subprocess.check_output(['/usr/bin/lipo', '-archs', str(path)], text=True).split()
-            if 'arm64' not in arches:
-                raise ValueError('AI runtime native code lacks arm64: ' + str(path))
     return root
+
+
+def inspect_runtime(root):
+    """Read arm64 load commands rather than trusting a build-host or manifest version."""
+    if not root.is_dir():
+        raise ValueError('AI runtime must be an existing directory')
+    versions = [(11, 0, 0)]
+    count = 0
+    for path in root.rglob('*'):
+        if not native(path):
+            continue
+        output = subprocess.check_output(['/usr/bin/vtool', '-arch', 'arm64', '-show-build', str(path)], text=True)
+        found = []
+        for command in re.split(r'(?m)^Load command \d+\n', output)[1:]:
+            if 'cmd LC_BUILD_VERSION' in command and re.search(r'\bplatform MACOS\b', command):
+                found += re.findall(r'(?m)^\s*minos ([0-9]+(?:\.[0-9]+){1,2})\s*$', command)
+            elif 'cmd LC_VERSION_MIN_MACOSX' in command:
+                found += re.findall(r'(?m)^\s*version ([0-9]+(?:\.[0-9]+){1,2})\s*$', command)
+        if not found:
+            raise ValueError('AI runtime native code lacks a macOS arm64 deployment version: ' + str(path))
+        for version in found:
+            components = tuple(int(part) for part in version.split('.'))
+            versions.append(components + (0,) * (3 - len(components)))
+        count += 1
+    if not count:
+        raise ValueError('AI runtime contains no native code to inspect')
+    major, minor, patch = max(versions)
+    minimum = f'{major}.{minor}' + (f'.{patch}' if patch else '')
+    return {'minimum_system_version': minimum, 'native_file_count': count}
 
 
 def preflight(args):
@@ -68,6 +94,7 @@ def preflight(args):
     if args.arch != 'aarch64':
         raise ValueError('AI runtime supports only --arch aarch64; x86_64/universal are unsupported')
     root = resources(args.runtime)
+    deployment = inspect_runtime(root)
     source = Path(__file__).resolve().parents[1] / 'ai/build_runtime.py'
     spec = importlib.util.spec_from_file_location('filmcraft_runtime_build', source)
     module = importlib.util.module_from_spec(spec)
@@ -89,7 +116,9 @@ def preflight(args):
             parent = parent.parent
         if not os.access(parent, os.W_OK) or shutil.disk_usage(parent).free < minimum:
             raise ValueError(f'AI runtime packaging needs writable external storage and {minimum} free bytes: {parent}')
-    print(f'==> AI runtime preflight passed ({size} bytes; at least {minimum} free bytes required)')
+    print(f'==> AI runtime preflight passed ({size} bytes; at least {minimum} free bytes required; '
+          f'macOS {deployment["minimum_system_version"]} or later)', file=sys.stderr)
+    print(deployment['minimum_system_version'])
 
 
 def main():
@@ -100,12 +129,16 @@ def main():
     check.add_argument('--arch', required=True)
     check.add_argument('--target-dir', type=Path, required=True)
     check.add_argument('--dist', type=Path, required=True)
+    inspection = sub.add_parser('inspect', help='Read-only native deployment-version inventory')
+    inspection.add_argument('runtime', type=Path)
     listing = sub.add_parser('signing-paths')
     listing.add_argument('runtime', type=Path)
     args = parser.parse_args()
     try:
         if args.command == 'check':
             preflight(args)
+        elif args.command == 'inspect':
+            print(json.dumps(inspect_runtime(args.runtime)))
         else:
             # First sign each real Mach-O, then deepest framework/app bundles, then their parents.
             files, bundles = [], []

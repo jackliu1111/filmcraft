@@ -40,14 +40,14 @@ esac
 # Validate AI inputs and external destinations before env.sh creates DIST, any build,
 # destructive WORK cleanup, or lipo. Non-AI packaging keeps its established defaults.
 if [ -n "$AI_RUNTIME" ]; then
-  python3 "$HERE/ai-package.py" check --runtime "$AI_RUNTIME" --arch "$ARCH" \
-    --target-dir "${CARGO_TARGET_DIR:-$PACKAGE_ROOT/target}" --dist "${DIST:-$PACKAGE_ROOT/dist/release}"
+  AI_MIN_VERSION="$(python3 "$HERE/ai-package.py" check --runtime "$AI_RUNTIME" --arch "$ARCH" \
+    --target-dir "${CARGO_TARGET_DIR:-$PACKAGE_ROOT/target}" --dist "${DIST:-$PACKAGE_ROOT/dist/release}")"
   AI_RUNTIME="$(cd -P "$AI_RUNTIME" && pwd)"
 fi
 # shellcheck source=../env.sh
 . "$HERE/../env.sh"
 
-# Keep in sync with LSMinimumSystemVersion in Info.plist.in.
+# Base editor target; AI runtime preflight may raise the final app minimum.
 export MACOSX_DEPLOYMENT_TARGET=11.0
 IDENTITY="${MACOS_SIGN_IDENTITY:--}"
 SHORT_VERSION="${VERSION%%-*}"
@@ -126,6 +126,10 @@ cp "$ROOT/assets/app-icon/filmcraft.icns" "$APP/Contents/Resources/FilmCraft.icn
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHORT_VERSION@/$SHORT_VERSION/g" \
   -e "s/@BUILD_SHA@/${FILMCRAFT_BUILD_SHA:-unknown}/g" \
   "$HERE/Info.plist.in" >"$APP/Contents/Info.plist"
+if [ -n "$AI_RUNTIME" ]; then
+  # Embedded media/native libraries may require a newer macOS than the editor itself.
+  plutil -replace LSMinimumSystemVersion -string "$AI_MIN_VERSION" "$APP/Contents/Info.plist"
+fi
 plutil -lint "$APP/Contents/Info.plist"
 printf 'APPL????' >"$APP/Contents/PkgInfo"
 # licences of the embedded craft-fonts fonts (builds with CRAFT_FONTS_DIR)
