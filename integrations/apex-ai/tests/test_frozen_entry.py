@@ -6,6 +6,7 @@ used here. Packaging acceptance separately exercises the real executable.
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -115,6 +116,25 @@ class ModelService: pass
         self.assertNotEqual(0, proc.returncode)
         self.assertEqual('runtime_unavailable', events[-1]['code'])
         self.assertEqual([], list(self.data.iterdir()))
+
+    def test_packaged_data_cannot_write_anywhere_inside_the_signed_app(self):
+        app = self.root.parent / 'FilmCraft AI.app'
+        packaged_root = app / 'Contents/Resources/ai-runtime'
+        packaged_root.parent.mkdir(parents=True)
+        shutil.move(str(self.root), packaged_root)
+        self.root = packaged_root
+        self.service = self.root / 'service/filmcraft-ai'
+        sibling = app / 'Contents/Resources/native-data'
+        sibling.mkdir()
+        before = sorted(str(path.relative_to(app)) for path in app.rglob('*'))
+        for data in (app, app / 'Contents', packaged_root.parent, sibling, self.root):
+            for command in ('--check-runtime', 'probe', 'analyze', 'validate'):
+                with self.subTest(data=data.relative_to(app), command=command):
+                    self.data = data
+                    proc, events = self.run_service(command)
+                    self.assertNotEqual(0, proc.returncode, proc.stdout + proc.stderr)
+                    self.assertEqual('runtime_unavailable', events[-1]['code'])
+                    self.assertEqual(before, sorted(str(path.relative_to(app)) for path in app.rglob('*')))
 
     def test_frozen_worker_reentry_preserves_the_worker_protocol(self):
         self.service.write_text(self.service.read_text().replace(str(ENTRY), str(FROZEN_ENTRY)))
