@@ -43,7 +43,7 @@ end run
 APPLESCRIPT
 }
 
-PROMPT='请选择已挂载的外接磁盘中的 AI 数据文件夹。FilmCraft 会将分析数据、缓存及临时文件保存在此处，并记住这个位置。'
+PROMPT='请选择已挂载的外接 APFS/HFS（Mac OS 扩展）磁盘或 APFS 磁盘映像中的 AI 数据文件夹。FilmCraft 会将分析数据、缓存及临时文件保存在此处，并记住这个位置。'
 while :; do
   if [ -z "$DATA" ]; then
     DATA="$(choose_data "$PROMPT")" || fail "无法选择 AI 数据目录。"

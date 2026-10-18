@@ -6,6 +6,8 @@
 
 先支持 macOS arm64。应用携带冻结的 Python/共享 Apex 桥接后端、模型代码与本地权重、FFmpeg/ffprobe 及依赖，不依赖开发源码目录、用户虚拟环境或 Homebrew。保留现有 NDJSON 的 probe/analyze/validate、进度、错误、取消及父进程保护。包内资源只读；模型数据、缓存和临时文件使用显式 `APEX_AI_DATA_DIR` 或 `FILMCRAFT_AI_DATA_DIR` 指定的外接目录，不静默向本机写大数据。保留现有显式开发环境入口。
 
+数据目录所在的挂载卷必须使用 APFS 或 HFS（Mac OS 扩展），在创建缓存、临时目录及启动后端前检查。真实 ExFAT 数据目录生成的 macOS AppleDouble `._*.json` 会被当前共享后端当作任务 JSON 读取，导致恢复失败；本轮不修改共享核心。可使用外接磁盘上的 APFS 磁盘映像；仅数据挂载卷要求 APFS/HFS，映像的物理外接存储可使用 ExFAT，但须继续验证其确为已挂载的外接卷。无兼容卷时明确报错，不回退本机目录。
+
 运行时契约：`Contents/Resources/ai-runtime/manifest.json`，`schema_version: 1`，`platform: macos-arm64`，`service: service/filmcraft-ai`，`model_workspace: model`，`checkpoint: model/checkpoints/BEATs_strong_1.pt`，`ffmpeg: service/_internal/bin/ffmpeg`，`ffprobe: service/_internal/bin/ffprobe`。路径相对运行时根，拒绝绝对路径或逃逸根目录。声明并校验所需文件；错误不得退回开发路径。冻结服务从自身位置读取契约，向共享核心提供显式模型工作进程命令，正确分派 guardian/inference-worker，避免把冻结程序当作通用 Python 解释器。
 
 原生应用优先保留显式 `FILMCRAFT_APEX_PYTHON`/`FILMCRAFT_APEX_BRIDGE` 开发入口；否则存在包内运行时就直接调用冻结服务。声明运行时缺失/损坏必须报错。没有包内运行时的源码开发继续原有行为。

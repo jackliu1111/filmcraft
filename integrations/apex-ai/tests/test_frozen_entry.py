@@ -45,11 +45,11 @@ class FrozenEntryTests(unittest.TestCase):
         self.service.write_text(
             '#!' + sys.executable + '\nimport runpy, sys\n'
             'sys.frozen = True\nsys.executable = __file__\n'
-            'import os, plistlib, subprocess\n'
+            'import os, json, plistlib, subprocess\n'
             'original_output = subprocess.check_output\n'
             'def disk_output(command, **kwargs):\n'
-            ' if command[0] == "/sbin/mount": return ' + repr('/dev/disk99 on ' + str(Path(self.temp.name).resolve()) + ' (apfs, local, journaled)\n') + '\n'
-            ' if command[0] == "/usr/bin/hdiutil": return plistlib.dumps({"images":[]})\n'
+            ' if command[0] == "/sbin/mount": return os.environ.get("FILMCRAFT_TEST_MOUNTS") or ' + repr('/dev/disk99 on ' + str(Path(self.temp.name).resolve())) + ' + " (" + os.environ.get("FILMCRAFT_TEST_FILESYSTEM", "apfs") + ", local, journaled)\\n"\n'
+            ' if command[0] == "/usr/bin/hdiutil": return plistlib.dumps(json.loads(os.environ.get("FILMCRAFT_TEST_IMAGES", \'{"images":[]}\')))\n'
             ' if command[0] == "/usr/sbin/diskutil": return plistlib.dumps({"Internal":bool(os.environ.get("FILMCRAFT_TEST_INTERNAL_VOLUME"))})\n'
             ' return original_output(command, **kwargs)\n'
             'subprocess.check_output = disk_output\n'
@@ -116,6 +116,44 @@ class ModelService: pass
         self.assertNotEqual(0, proc.returncode)
         self.assertEqual('runtime_unavailable', events[-1]['code'])
         self.assertEqual([], list(self.data.iterdir()))
+
+    def test_exfat_data_is_rejected_before_backend_start_or_cache_creation(self):
+        self.backend.write_text('raise AssertionError("incompatible data started backend")\n')
+        for command in ('--check-runtime', 'probe', 'analyze', 'validate'):
+            with self.subTest(command=command):
+                proc, events = self.run_service(command, extra_env={'FILMCRAFT_TEST_FILESYSTEM': 'exfat'})
+                self.assertNotEqual(0, proc.returncode)
+                self.assertEqual('runtime_unavailable', events[-1]['code'])
+                self.assertIn('APFS', events[-1]['message'])
+                self.assertIn('HFS', events[-1]['message'])
+                self.assertEqual([], list(self.data.iterdir()))
+
+    def test_apfs_and_hfs_external_data_remain_supported(self):
+        for filesystem in ('apfs', 'hfs'):
+            with self.subTest(filesystem=filesystem):
+                proc, events = self.run_service('--check-runtime', extra_env={'FILMCRAFT_TEST_FILESYSTEM': filesystem})
+                self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+                self.assertEqual('ready', events[-1]['status'])
+
+    def test_apfs_image_can_use_exfat_backing_only_on_a_verified_external_disk(self):
+        backing = Path(self.temp.name).resolve() / '物理 ExFAT'
+        image = Path(self.temp.name).resolve() / 'APFS 数据映像'
+        backing.mkdir()
+        image.mkdir()
+        self.data = image / 'AI 数据'
+        self.data.mkdir()
+        image_file = backing / '数据.sparseimage'
+        image_file.write_bytes(b'fixture')
+        environment = {
+            'FILMCRAFT_TEST_MOUNTS': f'/dev/disk99 on {backing} (exfat, local)\n/dev/disk100 on {image} (apfs, local)\n',
+            'FILMCRAFT_TEST_IMAGES': json.dumps({'images': [{'image-path': str(image_file),
+                'system-entities': [{'mount-point': str(image)}]}]})}
+        proc, events = self.run_service('--check-runtime', extra_env=environment)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual('ready', events[-1]['status'])
+        proc, events = self.run_service('--check-runtime', extra_env=environment | {'FILMCRAFT_TEST_INTERNAL_VOLUME': '1'})
+        self.assertNotEqual(0, proc.returncode)
+        self.assertEqual('runtime_unavailable', events[-1]['code'])
 
     def test_packaged_data_cannot_write_anywhere_inside_the_signed_app(self):
         app = self.root.parent / 'FilmCraft AI.app'
