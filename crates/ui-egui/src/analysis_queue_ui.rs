@@ -16,21 +16,27 @@ fn selected(app: &FilmcraftApp) -> Option<Value> {
 fn execute(app: &mut FilmcraftApp, id: &str, p: Value) -> Result<Value, String> {
     app.session.execute(id, p).map_err(|e| e.to_string())
 }
+fn task_status(task: &Value) -> Status {
+    Status::from(task["status"].as_str().unwrap_or_default())
+}
 pub(super) fn label(status: &str) -> &str {
-    match status {
-        "unanalyzed" => "未分析",
-        "queued" => "排队中",
-        "probing" => "读取音轨",
-        "waiting_audio" => "等待试听与选轨",
-        "running" => "分析中",
-        "completed" => "已完成",
-        "cancelled" => "已取消",
-        "failed" => "失败",
-        "unavailable" => "不可用",
-        "interrupted" => "已中断，待主动继续",
-        _ => "未知状态",
+    if status == "unanalyzed" {
+        return "未分析";
+    }
+    match Status::from(status) {
+        Status::Queued => "排队中",
+        Status::Probing => "读取音轨",
+        Status::WaitingAudio => "等待试听与选轨",
+        Status::Running => "分析中",
+        Status::Completed => "已完成",
+        Status::Cancelled => "已取消",
+        Status::Failed => "失败",
+        Status::Unavailable => "不可用",
+        Status::Interrupted => "已中断，待主动继续",
+        Status::Unknown(_) => "未知状态",
     }
 }
+
 pub(super) fn refresh(app: &mut FilmcraftApp) {
     association::refresh(app);
     app.apex_ai.queue = app.session.project.analysis_queue.iter().filter_map(|t| serde_json::to_value(t).ok()).collect();
@@ -39,7 +45,7 @@ pub(super) fn refresh(app: &mut FilmcraftApp) {
         .project
         .analysis_queue
         .iter()
-        .map(|t| (t.item, format!("{}{}", label(&t.status), t.error.as_ref().map(|e| format!("：{e}")).unwrap_or_default())))
+        .map(|t| (t.item, format!("{}{}", label(t.status.as_str()), t.error.as_ref().map(|e| format!("：{e}")).unwrap_or_default())))
         .collect();
 }
 fn load(app: &mut FilmcraftApp, item: ItemId) {
@@ -68,7 +74,7 @@ fn load_job(app: &mut FilmcraftApp, item: ItemId, preferred: Option<u64>) {
     app.apex_ai.audio_stream = task.as_ref().and_then(|t| t.audio_stream).or_else(|| record.as_ref().and_then(|r| r["audioStream"].as_u64()));
     app.apex_ai.pending = record.map(|r| r["result"].clone());
     app.apex_ai.stage =
-        task.as_ref().map(|t| t.status.clone()).unwrap_or_else(|| if app.apex_ai.pending.is_some() { "completed" } else { "unanalyzed" }.into());
+        task.as_ref().map(|t| t.status.as_str().to_owned()).unwrap_or_else(|| if app.apex_ai.pending.is_some() { "completed" } else { "unanalyzed" }.into());
     app.apex_ai.message = label(&app.apex_ai.stage).into();
     app.apex_ai.error = task.and_then(|t| t.error);
     app.apex_ai.progress = None;
@@ -126,8 +132,8 @@ fn ensure(app: &mut FilmcraftApp, p: &Value) -> Result<Value, String> {
 }
 pub(super) fn request(app: &mut FilmcraftApp, p: &Value, analyze: bool) -> Result<(), String> {
     let task = ensure(app, p)?;
-    let status = task["status"].as_str().unwrap_or_default();
-    if status == "waiting_audio" && analyze {
+    let status = task_status(&task);
+    if status == Status::WaitingAudio && analyze {
         let audio = match p.get("audioStream") {
             Some(v) => Some(v.as_u64().ok_or("audioStream 必须是非负整数")?),
             None => app.apex_ai.audio_stream,
@@ -139,12 +145,12 @@ pub(super) fn request(app: &mut FilmcraftApp, p: &Value, analyze: bool) -> Resul
         execute(app, "analysis.selectAudio", json!({"job":task["id"],"attempt":task["attempt"],"audioStream":audio}))?;
         app.clear_source_audition();
         app.apex_ai.audition_stream = None;
-    } else if matches!(status, "completed" | "cancelled" | "failed" | "unavailable" | "interrupted") {
+    } else if status.can_retry() {
         execute(app, "analysis.retry", json!({"job":task["id"]}))?;
         app.clear_source_audition();
         app.apex_ai.auditioned.clear();
         app.apex_ai.audition_stream = None;
-    } else if status == "waiting_audio" && !analyze {
+    } else if status == Status::WaitingAudio && !analyze {
         execute(app, "analysis.cancel", json!({"job":task["id"]}))?;
         execute(app, "analysis.retry", json!({"job":task["id"]}))?;
     }
@@ -187,7 +193,7 @@ pub(super) fn retry(app: &mut FilmcraftApp, p: &Value) -> Result<(), String> {
     Ok(())
 }
 pub(super) fn can_confirm(app: &FilmcraftApp) -> bool {
-    selected(app).is_none_or(|t| !matches!(t["status"].as_str(), Some("queued" | "probing" | "running")))
+    selected(app).is_none_or(|t| !task_status(&t).waits_for_worker())
 }
 
 pub(super) fn poll(app: &mut FilmcraftApp, ctx: &egui::Context) {
@@ -264,10 +270,7 @@ pub(super) fn poll(app: &mut FilmcraftApp, ctx: &egui::Context) {
         .project
         .analysis_queue
         .iter()
-        .filter(|t| {
-            matches!(t.status.as_str(), "queued" | "waiting_audio" | "probing" | "running")
-                && app.session.project.item(t.item).and_then(|i| i.as_media()).is_none_or(|m| m.offline)
-        })
+        .filter(|t| t.status.is_pending() && app.session.project.item(t.item).and_then(|i| i.as_media()).is_none_or(|m| m.offline))
         .map(|t| (t.id, t.attempt))
         .collect();
     for (id, attempt) in missing {
@@ -277,7 +280,7 @@ pub(super) fn poll(app: &mut FilmcraftApp, ctx: &egui::Context) {
     {
         if let Some((id, attempt, incarnation)) = app.apex_ai.active.as_ref().map(|a| (a.id, a.attempt, a.incarnation)) {
             if incarnation == app.session.recognition_jobs.incarnation
-                && job(app, id).is_some_and(|t| t["attempt"].as_u64() == Some(attempt) && matches!(t["status"].as_str(), Some("probing" | "running")))
+                && job(app, id).is_some_and(|t| t["attempt"].as_u64() == Some(attempt) && task_status(&t).has_worker())
             {
                 if let Err(error) = execute(app, "analysis.checkOrigin", json!({"job":id})) {
                     let _ = execute(app, "analysis.fail", json!({"job":id,"attempt":attempt,"code":"source_changed","error":error}));
@@ -288,9 +291,7 @@ pub(super) fn poll(app: &mut FilmcraftApp, ctx: &egui::Context) {
         if let Some(worker) = &mut app.apex_ai.worker {
             if app.apex_ai.active.as_ref().is_none_or(|a| a.validation.is_none() || a.incarnation != app.session.recognition_jobs.incarnation)
                 && current_active.as_ref().is_none_or(|(inc, attempt, t)| {
-                    *inc != app.session.recognition_jobs.incarnation
-                        || t["attempt"].as_u64() != Some(*attempt)
-                        || !matches!(t["status"].as_str(), Some("probing" | "running"))
+                    *inc != app.session.recognition_jobs.incarnation || t["attempt"].as_u64() != Some(*attempt) || !task_status(&t).has_worker()
                 })
             {
                 worker.cancel();
@@ -314,8 +315,7 @@ pub(super) fn poll(app: &mut FilmcraftApp, ctx: &egui::Context) {
             let (id, attempt, incarnation) = (active.id, active.attempt, active.incarnation);
             match event {
                 native::Event::Progress { stage, message, progress } => {
-                    let valid =
-                        job(app, id).is_some_and(|t| t["attempt"].as_u64() == Some(attempt) && matches!(t["status"].as_str(), Some("probing" | "running")));
+                    let valid = job(app, id).is_some_and(|t| t["attempt"].as_u64() == Some(attempt) && task_status(&t).has_worker());
                     if incarnation == app.session.recognition_jobs.incarnation && valid {
                         app.apex_ai.job_progress.insert(id, (message.clone(), progress));
                         if app.apex_ai.selected_job == Some(id) {
@@ -335,14 +335,14 @@ pub(super) fn poll(app: &mut FilmcraftApp, ctx: &egui::Context) {
                         continue;
                     }
                     if cancelled {
-                        if job(app, id).is_some_and(|t| t["attempt"].as_u64() == Some(attempt) && matches!(t["status"].as_str(), Some("probing" | "running"))) {
+                        if job(app, id).is_some_and(|t| t["attempt"].as_u64() == Some(attempt) && task_status(&t).has_worker()) {
                             let _ = execute(app, "analysis.cancel", json!({"job":id}));
                         }
                     } else {
                         match outcome {
                             Ok(native::Outcome::Media(media)) => {
                                 if let Ok(task) = execute(app, "analysis.probed", json!({"job":id,"attempt":attempt,"media":media})) {
-                                    if task["status"] == "waiting_audio" {
+                                    if task_status(&task) == Status::WaitingAudio {
                                         app.apex_ai.open = true;
                                     }
                                 }
@@ -374,8 +374,8 @@ pub(super) fn poll(app: &mut FilmcraftApp, ctx: &egui::Context) {
                 if !next.is_null() {
                     if let Ok(task) = execute(app, "analysis.start", json!({"job":next["id"],"attempt":next["attempt"]})) {
                         if let (Some(id), Some(attempt), Some(path)) = (task["id"].as_u64(), task["attempt"].as_u64(), task["source_path"].as_str()) {
-                            if matches!(task["status"].as_str(), Some("probing" | "running")) {
-                                let audio = if task["status"] == "running" { task["audio_stream"].as_u64() } else { None };
+                            if task_status(&task).has_worker() {
+                                let audio = if task_status(&task) == Status::Running { task["audio_stream"].as_u64() } else { None };
                                 match native::Worker::start(path, audio, ctx.clone()) {
                                     Ok(worker) => {
                                         app.apex_ai.active =

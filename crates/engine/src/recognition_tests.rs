@@ -631,3 +631,36 @@ fn recovery_two_projects_share_only_analysis_while_restoring_ranges_assemblies_a
     std::fs::remove_dir_all(directory).unwrap();
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn analysis_queue_preserves_legacy_terminal_strings_and_restores_unknown_activity_without_dispatch() {
+    for (persisted, expected) in [
+        ("completed", "completed"),
+        ("cancelled", "cancelled"),
+        ("failed", "failed"),
+        ("unavailable", "unavailable"),
+        ("interrupted", "interrupted"),
+        ("old_worker_phase", "interrupted"),
+    ] {
+        let (mut s, path) = recording();
+        s.execute("analysis.enqueue", json!({"item":5})).unwrap();
+        // Model an existing file's string statuses, without testing the status type's internals.
+        s.edit("Legacy saved queue fixture", |p, _| {
+            std::sync::Arc::make_mut(&mut p.analysis_queue)[0].status = persisted.into();
+            Ok(())
+        })
+        .unwrap();
+        let saved = format!("{path}.legacy-status.fcproj");
+        s.execute("file.saveAs", json!({"path":saved})).unwrap();
+        let mut reopened = Session::default();
+        reopened.execute("file.open", json!({"path":saved})).unwrap();
+        let restored = reopened.execute("analysis.list", json!({})).unwrap();
+        assert_eq!(restored[0]["status"], expected);
+        if persisted == "old_worker_phase" {
+            assert_eq!(restored[0]["previous_status"], persisted);
+        }
+        assert!(reopened.execute("analysis.next", json!({})).unwrap().is_null());
+        std::fs::remove_file(saved).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+}

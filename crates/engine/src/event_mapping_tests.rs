@@ -183,3 +183,97 @@ fn saved_original_events_and_native_clips_rebuild_the_same_mapping_coordinates_a
     std::fs::remove_file(project_path).unwrap();
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn ai_selection_rejects_replaced_source_before_drag_without_losing_saved_work_but_manual_remains_independent() {
+    let (mut s, path) = setup();
+    place(&mut s, 30.0, 6.0);
+    let ranges = s.execute("selection.inspect", json!({"item":5})).unwrap();
+    let range = ranges["ranges"][0]["rangeId"].clone();
+    let events = s.execute("recognition.inspect", json!({"item":5})).unwrap();
+    let sequence = s.execute("sequence.inspect", json!({})).unwrap();
+    let history = s.execute("history.list", json!({})).unwrap();
+    std::fs::write(&path, b"a different recording replaced this source file").unwrap();
+    assert_eq!(s.execute("recognition.recovery", json!({"item":5})).unwrap()["code"], "source_changed");
+    assert!(
+        s.execute("selection.capture", json!({"item":5,"rangeId":range})).is_err(),
+        "saved AI event ranges must not bind to replacement media at drag start"
+    );
+    assert_eq!(s.execute("selection.inspect", json!({"item":5})).unwrap(), ranges);
+    assert_eq!(s.execute("recognition.inspect", json!({"item":5})).unwrap(), events);
+    assert_eq!(s.execute("sequence.inspect", json!({})).unwrap(), sequence);
+    assert_eq!(s.execute("history.list", json!({})).unwrap(), history);
+    let manual = s.execute("selection.addRange", json!({"item":5,"start":t(8.0),"duration":t(8.0)})).unwrap();
+    let snapshot = s.execute("selection.capture", json!({"item":5,"rangeId":manual["rangeId"]})).unwrap();
+    s.execute("selection.place", json!({"snapshot":snapshot,"append":true})).unwrap();
+    assert_eq!(s.execute("sequence.inspect", json!({})).unwrap()["duration"], t(14.0));
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn ai_selection_rejects_relinked_proxy_interpreted_and_remapped_sources_at_capture_and_commit() {
+    for mode in ["relink", "proxy", "interpret", "audio"] {
+        let (mut s, path) = setup();
+        let range = s.execute("selection.inspect", json!({"item":5})).unwrap()["ranges"][0]["rangeId"].clone();
+        let snapshot = s.execute("selection.capture", json!({"item":5,"rangeId":range})).unwrap();
+        place(&mut s, 30.0, 6.0);
+        let other = format!("{path}.relinked.mp4");
+        std::fs::write(&other, b"replacement source").unwrap();
+        if mode == "interpret" {
+            s.execute("clip.interpretFootage", json!({"items":[5],"pixelAspect":[2,1]})).unwrap();
+        } else {
+            // Fixtures represent already-relinked/attached media; observations remain public commands.
+            s.edit("Changed media fixture", |p, _| {
+                let media = p.item_mut(ItemId(5)).unwrap().as_media_mut().unwrap();
+                match mode {
+                    "relink" => media.media = MediaRef::File { path: other.clone() },
+                    "proxy" => media.proxy = Some(MediaRef::File { path: path.clone() }),
+                    "audio" => media.info.audio_streams[0].sample_rate = 44100,
+                    _ => unreachable!(),
+                }
+                Ok(())
+            })
+            .unwrap();
+        }
+        let ranges = s.execute("selection.inspect", json!({"item":5})).unwrap();
+        let events = s.execute("recognition.inspect", json!({"item":5})).unwrap();
+        let sequence = s.execute("sequence.inspect", json!({})).unwrap();
+        let history = s.execute("history.list", json!({})).unwrap();
+        assert!(s.execute("selection.capture", json!({"item":5,"rangeId":range})).is_err(), "{mode} before drag must reject old AI provenance");
+        assert!(s.execute("selection.place", json!({"snapshot":snapshot,"append":true})).is_err(), "{mode} must also be checked at commit");
+        assert_eq!(s.execute("selection.inspect", json!({"item":5})).unwrap(), ranges);
+        assert_eq!(s.execute("recognition.inspect", json!({"item":5})).unwrap(), events);
+        assert_eq!(s.execute("sequence.inspect", json!({})).unwrap(), sequence);
+        assert_eq!(s.execute("history.list", json!({})).unwrap(), history);
+        std::fs::remove_file(other).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
+fn ai_selection_commit_requires_its_captured_analysis_but_missing_prediction_cache_does_not_discard_saved_events() {
+    let (mut s, path) = setup();
+    let range = s.execute("selection.inspect", json!({"item":5})).unwrap()["ranges"][0]["rangeId"].clone();
+    let snapshot = s.execute("selection.capture", json!({"item":5,"rangeId":range})).unwrap();
+    let mut result = s.execute("recognition.inspect", json!({"item":5})).unwrap()["result"].clone();
+    result["result_id"] = json!("refreshed-analysis");
+    let job = s.execute("recognition.begin", json!({"item":5,"audioStream":1})).unwrap();
+    s.execute("recognition.attach", json!({"token":job["token"],"result":result})).unwrap();
+    let ranges = s.execute("selection.inspect", json!({"item":5})).unwrap();
+    let history = s.execute("history.list", json!({})).unwrap();
+    let sequence = s.execute("sequence.inspect", json!({})).unwrap();
+    assert!(s.execute("selection.place", json!({"snapshot":snapshot,"append":true})).is_err(), "same file signature must not accept another analysis record");
+    assert_eq!(s.execute("history.list", json!({})).unwrap(), history);
+    assert_eq!(s.execute("sequence.inspect", json!({})).unwrap(), sequence);
+    assert_eq!(s.execute("selection.inspect", json!({"item":5})).unwrap(), ranges);
+    s.execute(
+        "recognition.validated",
+        json!({"item":5,"resultId":"refreshed-analysis","projectToken":ranges["projectToken"],"error":"外部分数缓存已移除","code":"prediction_missing"}),
+    )
+    .unwrap();
+    let fresh = s.execute("selection.capture", json!({"item":5,"rangeId":ranges["ranges"][0]["rangeId"]})).unwrap();
+    s.execute("selection.place", json!({"snapshot":fresh,"append":true})).unwrap();
+    assert!(s.execute("sequence.inspect", json!({})).unwrap()["duration"].as_i64().unwrap() > 0);
+    assert_eq!(s.execute("recognition.inspect", json!({"item":5})).unwrap()["result"], result);
+    std::fs::remove_file(path).unwrap();
+}

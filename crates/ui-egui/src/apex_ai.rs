@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use filmcraft_engine::Session;
-use filmcraft_project::{ItemId, MediaRef};
+use filmcraft_project::{AnalysisStatus as Status, ItemId, MediaRef};
 use serde_json::{Value, json};
 
 use crate::FilmcraftApp;
@@ -326,7 +326,7 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
                 if open.clicked() {
                     action = Some(("apexAi.open", json!({"job":id})));
                 }
-                if matches!(status, "queued" | "probing" | "waiting_audio" | "running") {
+                if Status::from(status).is_pending() {
                     let cancel = ui.button("取消");
                     app.auto.add(&format!("apexAi.queue.{id}.cancel"), cancel.rect, "取消此分析任务");
                     if cancel.clicked() {
@@ -344,7 +344,7 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
                 ui.small(error);
             }
             if let Some((message, progress)) = app.apex_ai.job_progress.get(&id) {
-                if matches!(status, "probing" | "running") {
+                if Status::from(status).has_worker() {
                     ui.small(message);
                     if let Some(progress) = progress {
                         ui.add(egui::ProgressBar::new(*progress));
