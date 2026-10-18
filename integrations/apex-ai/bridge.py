@@ -55,10 +55,18 @@ class CategorizedOutput:
 
 def main(argv=None):
     env = dict(os.environ)
-    env.setdefault('APEX_AI_DATA_DIR', str(ROOT / 'outputs/apex-ai/model-data'))
-    env.setdefault('APEX_MODEL_WORKSPACE', str(ROOT.parent / 'apex-voice-detect'))
     try:
-        module = load_backend(backend_root(env))
+        if getattr(sys, 'frozen', False):
+            from runtime import FrozenBackend, runtime_environment
+            env = runtime_environment(env)
+            if (sys.argv[1:] if argv is None else argv) == ['--check-runtime']:
+                print(json.dumps({'type': 'runtime', 'status': 'ready', 'data_dir': env['APEX_AI_DATA_DIR']}, ensure_ascii=False), flush=True)
+                return 0
+            module = FrozenBackend(load_backend(backend_root(env)))
+        else:
+            env.setdefault('APEX_AI_DATA_DIR', str(ROOT / 'outputs/apex-ai/model-data'))
+            env.setdefault('APEX_MODEL_WORKSPACE', str(ROOT.parent / 'apex-voice-detect'))
+            module = load_backend(backend_root(env))
         args = sys.argv[1:] if argv is None else argv
         if args and args[0] == 'validate':
             from recovery import main as validate
