@@ -31,5 +31,5 @@ Standards 的硬 P1 与 Spec 的 P2 指向同一个调用链问题，保留各�
 - `cargo test -p filmcraft-engine selection_ --offline --lib`：47/47，包含旧范围编辑、拖放、撤销、来源保护等；过滤组彼此存在重叠，不将数量相加冒充独立测试数。
 - `cargo check -p filmcraft-ui-egui --offline` 与 `git diff --check`：通过。构建全程使用独立 `filmcraft-ai-target-21`，没有占用主任务 target。
 - 交付前同步集成 `5c676419`（仅在审查基线上追加验收文档）。
-- [待主任务验证] 修复后真实已保存 AI 范围的捕获、追加及一次撤销正向路径；此前原生恢复和取消／失败导出证据不因本次单元回归被重新宣称。
+- 主任务在集成 `a16b200e` 完成完整原生构建（1分39秒），打开真实保存工程。公开 capture 返回识别证据，追加后一次撤销完整恢复；原生点击范围后 Shift+Enter 追加并撤销也通过，原始事件、人工范围及原有三秒声画完全不变。证据 `outputs/ai-validation/final-provenance-native.json`。此前原生恢复和取消／失败导出结果仍按各自执行版本说明，没有重复编码媒体。
 - 来源替换与媒体设置测试使用确定性占位文件及已变更媒体元数据，证明公共编辑边界保护；不据此宣称真实模型或播放／导出重新验收。
