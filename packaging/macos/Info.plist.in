@@ -32,8 +32,9 @@
   <string>FilmCraft</string>
   <key>LSApplicationCategoryType</key>
   <string>public.app-category.video</string>
-  <!-- Must match MACOSX_DEPLOYMENT_TARGET in package.sh. Big Sur is the first release on
-       Apple silicon and has the Metal feature set wgpu targets. -->
+  <!-- Base editor target matches MACOSX_DEPLOYMENT_TARGET in package.sh. AI packaging
+       raises this value to the highest deployment target of its bundled native runtime.
+       Big Sur is the first release on Apple silicon with the Metal feature set wgpu targets. -->
   <key>LSMinimumSystemVersion</key>
   <string>11.0</string>
   <key>NSHighResolutionCapable</key>
