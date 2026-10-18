@@ -1,0 +1,379 @@
+{
+  "date": "2026-10-16 Asia/Shanghai",
+  "source_repository": "jackliu1111/apex-fps-mvp",
+  "source_revision": "978fed1580fdf85d34e2b5c17f973693c5510693",
+  "target_repository": "jackliu1111/filmcraft",
+  "target_revision": "c2f65871e998cca4700a74dbcf9348cab51fb06b",
+  "copied_files": [
+    {
+      "source": "GLOSSARY.md",
+      "destination": "docs/ai-selection/GLOSSARY.md",
+      "source_sha256": "6a91b103353fe7f3f95c8abca1151f58de712307d780aaf6a8e4f7edb79593f5",
+      "destination_sha256": "6a91b103353fe7f3f95c8abca1151f58de712307d780aaf6a8e4f7edb79593f5",
+      "bytes": 5327
+    },
+    {
+      "source": "docs/design/ai-recognition-workspace.md",
+      "destination": "docs/ai-selection/design/recognition-workspace.md",
+      "source_sha256": "f4148f7502502e6bb2a5606c941a680ea850430f2625c73fd0c34349c729e456",
+      "destination_sha256": "fc1652a1c0cb5b63cd2c44de63f661a512e3a31051162a0fd5196f9aa8b1ed7a",
+      "bytes": 24423
+    },
+    {
+      "source": "docs/design/auto-highlight-editing.md",
+      "destination": "docs/ai-selection/design/auto-highlight-editing.md",
+      "source_sha256": "d83567714f8df1cd16868ccfdaeaf265c7c8b74a7f51b981741f0fe2c46c5780",
+      "destination_sha256": "5e331b4e66bf530aee048feb4e4b5fd29269af88b0de25f70a4958a67beda540",
+      "bytes": 6329
+    },
+    {
+      "source": "docs/adr/0001-audio-model-first.md",
+      "destination": "docs/ai-selection/decisions/0001-audio-model-first.md",
+      "source_sha256": "f747ce5b48e779ae145e1bf74fe692acfa0a22224cbe079041f64ca6532b7d4a",
+      "destination_sha256": "93bf04d00918f70f5f7718bb3dce5a6da9ac823fae7b117febcaf7e776d79352",
+      "bytes": 994
+    },
+    {
+      "source": "docs/adr/0003-preserve-ai-draft-and-editing-copy.md",
+      "destination": "docs/ai-selection/decisions/0003-preserve-ai-draft-and-editing-copy.md",
+      "source_sha256": "c6d79d1538ffee4f168d105edc33c6099b446d8920bee73843d0280ea2eaa6fa",
+      "destination_sha256": "ee801bc71801315735134f8fefd5db8ed1fae463e6b9a2b20f73e44866dff7f4",
+      "bytes": 1856
+    },
+    {
+      "source": "docs/adr/0004-separate-recognition-events-and-clip-selection.md",
+      "destination": "docs/ai-selection/decisions/0004-separate-recognition-events-and-clip-selection.md",
+      "source_sha256": "204796b1040957942e43d576e5f72bce04534ec7d85205c0021b039fa9dcaf28",
+      "destination_sha256": "b2157ab18c9a6e7a89c67f6ab84e250aab306f72661a28a5352b813f6ba1c6c8",
+      "bytes": 1073
+    },
+    {
+      "source": "docs/adr/0005-target-track-controls-contiguous-editing.md",
+      "destination": "docs/ai-selection/decisions/0005-target-track-controls-contiguous-editing.md",
+      "source_sha256": "81c3e233619666c939d6a119ce1349a570492ee758382be822f661f162f7b8da",
+      "destination_sha256": "1b3f3fcb3ad24be539b17c01f180cfc31b6aff63b31cc529217234aea216efb4",
+      "bytes": 792
+    },
+    {
+      "source": "integrations/filmcraft/README.md",
+      "destination": "docs/ai-selection/integration-baseline.md",
+      "source_sha256": "4367fb98537d0ece80c35d03ab522c22c58f895d2411eda042acda9938934c11",
+      "destination_sha256": "68b6313acad86a1ee3f30696e213dd40828c70fcd4ead65a8333357aaf31c183",
+      "bytes": 7127
+    },
+    {
+      "source": "integrations/filmcraft/apex-ai.patch",
+      "destination": "integrations/apex-ai/reference/apex-ai.patch",
+      "source_sha256": "b3bd7135aeedaf6497fc73492d30edef720a6ac72cc9249c4a5a5cc5de6824a8",
+      "destination_sha256": "b3bd7135aeedaf6497fc73492d30edef720a6ac72cc9249c4a5a5cc5de6824a8",
+      "bytes": 52030
+    },
+    {
+      "source": "integrations/filmcraft/upstream.json",
+      "destination": "integrations/apex-ai/reference/upstream.json",
+      "source_sha256": "14ba5c1b607311a0caa2799f358b7c9bd9805251426bf8d3c69db20319bac10d",
+      "destination_sha256": "14ba5c1b607311a0caa2799f358b7c9bd9805251426bf8d3c69db20319bac10d",
+      "bytes": 400
+    },
+    {
+      "source": "integrations/filmcraft/recognition-ui.prototype/CAPTURE.md",
+      "destination": "prototypes/ai-selection/CAPTURE.md",
+      "source_sha256": "eedf08f45211b6ff3f7e3277b71b70159b6e2b863610ae7f5cfbc7b3af9f7984",
+      "destination_sha256": "ab27ac5136435c9465d6eb179f2fd3b4d2e557ad2f9bd90abbfdf8852cf61699",
+      "bytes": 12197
+    },
+    {
+      "source": "integrations/filmcraft/recognition-ui.prototype/README.md",
+      "destination": "prototypes/ai-selection/README.md",
+      "source_sha256": "cb140272130bb64242afc7ea06c1d1224b0d4325e4e6a3728d7209fcc91a3c94",
+      "destination_sha256": "5db928c5df1510e2b759f707f9d0f844c17f41ccd11dafa125ad513ff2f2fd8a",
+      "bytes": 6597
+    },
+    {
+      "source": "integrations/filmcraft/recognition-ui.prototype/app.js",
+      "destination": "prototypes/ai-selection/app.js",
+      "source_sha256": "e98128953e2a60361cb8043a3c1d5d59e376470590a0f309a2a54808b3d915cc",
+      "destination_sha256": "e98128953e2a60361cb8043a3c1d5d59e376470590a0f309a2a54808b3d915cc",
+      "bytes": 39996
+    },
+    {
+      "source": "integrations/filmcraft/recognition-ui.prototype/demo-poster.jpg",
+      "destination": "prototypes/ai-selection/demo-poster.jpg",
+      "source_sha256": "56ec4f2aa633ea3d82887100fa0f96e4cd29c2013ff9ee2d35b870ede5635fde",
+      "destination_sha256": "56ec4f2aa633ea3d82887100fa0f96e4cd29c2013ff9ee2d35b870ede5635fde",
+      "bytes": 44785
+    },
+    {
+      "source": "integrations/filmcraft/recognition-ui.prototype/demo-preview.mp4",
+      "destination": "prototypes/ai-selection/demo-preview.mp4",
+      "source_sha256": "dc81bc95d339c3eb6ae420f900d1bf3456ee6d434af1e7dc73acf8e6aacadeb6",
+      "destination_sha256": "dc81bc95d339c3eb6ae420f900d1bf3456ee6d434af1e7dc73acf8e6aacadeb6",
+      "bytes": 6977302
+    },
+    {
+      "source": "integrations/filmcraft/recognition-ui.prototype/evidence/prototype-A.jpg",
+      "destination": "prototypes/ai-selection/evidence/prototype-A.jpg",
+      "source_sha256": "31d3898c8e498b425058a8d08a64843a90c8e9a6a2e66dd7d7600213d784282b",
+      "destination_sha256": "31d3898c8e498b425058a8d08a64843a90c8e9a6a2e66dd7d7600213d784282b",
+      "bytes": 94822
+    },
+    {
+      "source": "integrations/filmcraft/recognition-ui.prototype/evidence/prototype-B.jpg",
+      "destination": "prototypes/ai-selection/evidence/prototype-B.jpg",
+      "source_sha256": "530492a413adbd37f91dca87976b4396f65e3f23e2b98f015b41ffb83fb9b9d0",
+      "destination_sha256": "530492a413adbd37f91dca87976b4396f65e3f23e2b98f015b41ffb83fb9b9d0",
+      "bytes": 95488
+    },
+    {
+      "source": "integrations/filmcraft/recognition-ui.prototype/evidence/prototype-C.jpg",
+      "destination": "prototypes/ai-selection/evidence/prototype-C.jpg",
+      "source_sha256": "4fbdd36453c924b44784a8e0af4b9b9c8aabebf623479641eb50505f087d10c1",
+      "destination_sha256": "4fbdd36453c924b44784a8e0af4b9b9c8aabebf623479641eb50505f087d10c1",
+      "bytes": 95578
+    },
+    {
+      "source": "integrations/filmcraft/recognition-ui.prototype/evidence/prototype-single-track.jpg",
+      "destination": "prototypes/ai-selection/evidence/prototype-single-track.jpg",
+      "source_sha256": "33667fb000f641be53e95d18b6653aec3159fa914d817337dce0ad9165477dcc",
+      "destination_sha256": "33667fb000f641be53e95d18b6653aec3159fa914d817337dce0ad9165477dcc",
+      "bytes": 188863
+    },
+    {
+      "source": "integrations/filmcraft/recognition-ui.prototype/evidence/prototype-timeline.jpg",
+      "destination": "prototypes/ai-selection/evidence/prototype-timeline.jpg",
+      "source_sha256": "4add6bc1b2003a2b61a6f11a3b66f85c86283d6daa6e640d79875edd3552a417",
+      "destination_sha256": "4add6bc1b2003a2b61a6f11a3b66f85c86283d6daa6e640d79875edd3552a417",
+      "bytes": 106413
+    },
+    {
+      "source": "integrations/filmcraft/recognition-ui.prototype/index.html",
+      "destination": "prototypes/ai-selection/index.html",
+      "source_sha256": "e52df8296e2a9c23ec8b619885e9fdf1a4f5895c1ca2c471aaf6a1d4a8dd63d9",
+      "destination_sha256": "e52df8296e2a9c23ec8b619885e9fdf1a4f5895c1ca2c471aaf6a1d4a8dd63d9",
+      "bytes": 10712
+    },
+    {
+      "source": "integrations/filmcraft/recognition-ui.prototype/media-fixture.json",
+      "destination": "prototypes/ai-selection/media-fixture.json",
+      "source_sha256": "d1fe27c894bd6be833aeaa9efe3613cdfef99bda3028ea13dd3ce57fab32b476",
+      "destination_sha256": "d1fe27c894bd6be833aeaa9efe3613cdfef99bda3028ea13dd3ce57fab32b476",
+      "bytes": 858
+    },
+    {
+      "source": "integrations/filmcraft/recognition-ui.prototype/serve.py",
+      "destination": "prototypes/ai-selection/serve.py",
+      "source_sha256": "3e77406f25a6d2ffe0da0b95c7432496591661c2cc839e0459b804c8ffd17e43",
+      "destination_sha256": "3e77406f25a6d2ffe0da0b95c7432496591661c2cc839e0459b804c8ffd17e43",
+      "bytes": 3290
+    },
+    {
+      "source": "integrations/filmcraft/recognition-ui.prototype/state.js",
+      "destination": "prototypes/ai-selection/state.js",
+      "source_sha256": "5f414f0782ad6bbd7f063e77ae17b374ecb66732f79f9760a5bf17246305199d",
+      "destination_sha256": "5f414f0782ad6bbd7f063e77ae17b374ecb66732f79f9760a5bf17246305199d",
+      "bytes": 15009
+    },
+    {
+      "source": "integrations/filmcraft/recognition-ui.prototype/styles.css",
+      "destination": "prototypes/ai-selection/styles.css",
+      "source_sha256": "31e58b5f92a0379c9ff1eb89f3306f2e763c8133866e06210e0f00e994057fdc",
+      "destination_sha256": "31e58b5f92a0379c9ff1eb89f3306f2e763c8133866e06210e0f00e994057fdc",
+      "bytes": 29421
+    },
+    {
+      "source": ".scratch/filmcraft-ai-selection/drafts/01-import-gunshot-recognition.md",
+      "destination": "docs/ai-selection/tickets/01-import-gunshot-recognition.md",
+      "source_sha256": "26e2963b1e759a5f62767a32a058b69199bab3be6530d8cb4dde87092e836b84",
+      "destination_sha256": "26e2963b1e759a5f62767a32a058b69199bab3be6530d8cb4dde87092e836b84",
+      "bytes": 1920
+    },
+    {
+      "source": ".scratch/filmcraft-ai-selection/drafts/02-contiguous-editing-track.md",
+      "destination": "docs/ai-selection/tickets/02-contiguous-editing-track.md",
+      "source_sha256": "44686284b073b88a9dd9538510f90c6a22bc8714ad1f1595f4da6f4d2004d3df",
+      "destination_sha256": "44686284b073b88a9dd9538510f90c6a22bc8714ad1f1595f4da6f4d2004d3df",
+      "bytes": 1834
+    },
+    {
+      "source": ".scratch/filmcraft-ai-selection/drafts/03-voice-recognition-lane.md",
+      "destination": "docs/ai-selection/tickets/03-voice-recognition-lane.md",
+      "source_sha256": "8c1ebfed43a281fffcc376e211377893eca4cdf438ad44afaa91288d8b80013f",
+      "destination_sha256": "8c1ebfed43a281fffcc376e211377893eca4cdf438ad44afaa91288d8b80013f",
+      "bytes": 1656
+    },
+    {
+      "source": ".scratch/filmcraft-ai-selection/drafts/04-edit-selection-ranges.md",
+      "destination": "docs/ai-selection/tickets/04-edit-selection-ranges.md",
+      "source_sha256": "37fc32d67726ead7277a5c5c493a37e307dd20d70fed334795da448d3dbaf98e",
+      "destination_sha256": "37fc32d67726ead7277a5c5c493a37e307dd20d70fed334795da448d3dbaf98e",
+      "bytes": 1779
+    },
+    {
+      "source": ".scratch/filmcraft-ai-selection/drafts/05-edit-ripple-reorder.md",
+      "destination": "docs/ai-selection/tickets/05-edit-ripple-reorder.md",
+      "source_sha256": "ef898786386ad27db1cfe7441051af02e55fe83efafa3febf31d3c222eb86779",
+      "destination_sha256": "ef898786386ad27db1cfe7441051af02e55fe83efafa3febf31d3c222eb86779",
+      "bytes": 1730
+    },
+    {
+      "source": ".scratch/filmcraft-ai-selection/drafts/06-drag-ai-selections.md",
+      "destination": "docs/ai-selection/tickets/06-drag-ai-selections.md",
+      "source_sha256": "dbea0aad120b8c1c8f3885aa84e8f90378308b26e6ea9cc7bf40e6636653465c",
+      "destination_sha256": "dbea0aad120b8c1c8f3885aa84e8f90378308b26e6ea9cc7bf40e6636653465c",
+      "bytes": 2029
+    },
+    {
+      "source": ".scratch/filmcraft-ai-selection/drafts/07-multitrack-analysis-and-retention.md",
+      "destination": "docs/ai-selection/tickets/07-multitrack-analysis-and-retention.md",
+      "source_sha256": "fca54a858ef7530a28d3e684008660f516155df46e8f1a91afc1a5a7db523288",
+      "destination_sha256": "fca54a858ef7530a28d3e684008660f516155df46e8f1a91afc1a5a7db523288",
+      "bytes": 1978
+    },
+    {
+      "source": ".scratch/filmcraft-ai-selection/drafts/08-analysis-queue-and-failure.md",
+      "destination": "docs/ai-selection/tickets/08-analysis-queue-and-failure.md",
+      "source_sha256": "9ff122fd93a2936b7be827f7f48a01091c76aba94c6d8893f57e2024da8a9014",
+      "destination_sha256": "9ff122fd93a2936b7be827f7f48a01091c76aba94c6d8893f57e2024da8a9014",
+      "bytes": 1842
+    },
+    {
+      "source": ".scratch/filmcraft-ai-selection/drafts/09-event-mapping-and-time-coordinates.md",
+      "destination": "docs/ai-selection/tickets/09-event-mapping-and-time-coordinates.md",
+      "source_sha256": "1df8ab4b414a559f863e02011244799c68a82d4fbbfa88cf9f464bf73e0f5f6e",
+      "destination_sha256": "1df8ab4b414a559f863e02011244799c68a82d4fbbfa88cf9f464bf73e0f5f6e",
+      "bytes": 2111
+    },
+    {
+      "source": ".scratch/filmcraft-ai-selection/drafts/10-assemble-current-ranges.md",
+      "destination": "docs/ai-selection/tickets/10-assemble-current-ranges.md",
+      "source_sha256": "7fe813a5be0d436110b764bd0b5df3130c3ba9f70aa5719293f3b2e7184c7c3b",
+      "destination_sha256": "7fe813a5be0d436110b764bd0b5df3130c3ba9f70aa5719293f3b2e7184c7c3b",
+      "bytes": 2203
+    },
+    {
+      "source": ".scratch/filmcraft-ai-selection/drafts/11-project-recovery-and-cache-isolation.md",
+      "destination": "docs/ai-selection/tickets/11-project-recovery-and-cache-isolation.md",
+      "source_sha256": "1dc7322545b9f1e26e6b0b28287b61414092264be9fa56e8778ce3db023d5f4e",
+      "destination_sha256": "1dc7322545b9f1e26e6b0b28287b61414092264be9fa56e8778ce3db023d5f4e",
+      "bytes": 2212
+    },
+    {
+      "source": ".scratch/filmcraft-ai-selection/drafts/12-real-recording-workflow-acceptance.md",
+      "destination": "docs/ai-selection/tickets/12-real-recording-workflow-acceptance.md",
+      "source_sha256": "e54184c9025a2cd39cc528105533d48fda6acbf62544d89f7340834e7cba1c59",
+      "destination_sha256": "e54184c9025a2cd39cc528105533d48fda6acbf62544d89f7340834e7cba1c59",
+      "bytes": 2395
+    },
+    {
+      "source": ".scratch/filmcraft-ai-selection/README.md",
+      "destination": "docs/ai-selection/tickets/README.md",
+      "source_sha256": "22c853d7e6d023645214424d777455ebc2e6268b4915332ad35c167ca436bda5",
+      "destination_sha256": "7e20bf4d3319195653e3981321f64e65af6edf5575bcf9a0db79ab688c5784bf",
+      "bytes": 8482
+    },
+    {
+      "source": ".scratch/filmcraft-ai-selection/published.md",
+      "destination": "docs/ai-selection/tickets/published.md",
+      "source_sha256": "3de381767de3ed594a80e41269b4466c50a40b60242fd9717bee9e2453224ada",
+      "destination_sha256": "978fb293d202ab8e03fe6f905e58eacccc8d980faabc301c9bfcac09ba438bfb",
+      "bytes": 3335
+    },
+    {
+      "source": ".scratch/filmcraft-ai-selection/native-capability-audit.md",
+      "destination": "docs/ai-selection/reviews/native-capability-audit.md",
+      "source_sha256": "5922238677a89d31a2905439401bd8cc852265d2d65801eca165ba4083731b29",
+      "destination_sha256": "124bdf49b7729fc4a76b0813c3ffe2cc4ee3e50a80e6784e93a01136fca03c4e",
+      "bytes": 9410
+    },
+    {
+      "source": ".scratch/filmcraft-ai-selection/prototype-compatibility.md",
+      "destination": "docs/ai-selection/reviews/prototype-compatibility.md",
+      "source_sha256": "f3d88574c9eff4c1c42afd4613ad4ca505d0569c6d9db08d01df75525966f432",
+      "destination_sha256": "c66f7cee208073d4fae38925b82569267e4d2c82fd99f0c528bf41cb2f2e8e7e",
+      "bytes": 5970
+    }
+  ],
+  "copied_file_count": 41,
+  "copied_bytes": 7872568,
+  "historical_local_evidence_not_copied": [],
+  "shared_model_core_copied": false,
+  "original_recordings_or_weights_copied": false,
+  "native_patch_applied": false,
+  "github_issues_transferred": false,
+  "validation": {
+    "status": "passed-with-documented-native-adaptation-pending",
+    "date": "2026-10-16",
+    "copied_checksums": 41,
+    "relative_markdown_links": 124,
+    "prototype_code_and_assets_unchanged": true,
+    "javascript_syntax": "passed",
+    "python_syntax": "passed",
+    "bridge_entry_tests": {
+      "passed": 4,
+      "failed": 0
+    },
+    "http_assets_and_video_range": "passed",
+    "real_external_backend_probe": "passed; synthetic audio/video; no model inference",
+    "native_patch_check": {
+      "applies_cleanly": false,
+      "details": "error: patch failed: crates/ui-egui/src/lib.rs:1695\nerror: crates/ui-egui/src/lib.rs: patch does not apply\nerror: patch failed: crates/ui-egui/src/menus.rs:176\nerror: crates/ui-egui/src/menus.rs: patch does not apply"
+    },
+    "native_build_run": false,
+    "model_inference_run": false,
+    "native_ui_or_export_run": false
+  },
+  "prepared_entrypoints_and_conventions": [
+    {
+      "file": "integrations/apex-ai/bridge.py",
+      "sha256": "1af0850d7f08cac5ae646223096955547f44a8a3801411111d04353855c8308a"
+    },
+    {
+      "file": "integrations/apex-ai/README.md",
+      "sha256": "ddb0c16d55fe3706ab247f3d21c075aec7ebfc367ed148add8b67c2ec6d661b2"
+    },
+    {
+      "file": "integrations/apex-ai/tests/test_bridge_entry.py",
+      "sha256": "b492714e4962ac90684dbc9e4299c74cc972c3441c928d9ae12803bc85ff5f18"
+    },
+    {
+      "file": "CONTEXT.md",
+      "sha256": "dca824d4a0d86f047ddc9b255db3f48acbc8b9d349abac5ba8c766d6bf8f362a"
+    },
+    {
+      "file": "docs/ai-selection/README.md",
+      "sha256": "deb2433dac80e7b0c5814ce776cd2392681af1ff166dbb453b6344ce72fbefbf"
+    },
+    {
+      "file": "docs/ai-selection/handoff.md",
+      "sha256": "9a9483f02ca9a3385f379ef0dff64880e834ee476871d69aba4e41a3a66a8970"
+    },
+    {
+      "file": "integrations/apex-ai/backend.json",
+      "sha256": "0ce31bf9a37d8ea0d69530b99c1ea4c0b83336bb1c1b7fdd4d73b96fe2c9760f"
+    },
+    {
+      "file": "docs/ai-selection/tickets/manifest.json",
+      "sha256": "f2cfef147fd1834b947d6875364d8648ca42514276effe5cf2c1e11061300235"
+    },
+    {
+      "file": "AGENTS.md",
+      "sha256": "bcbb1baa8571394394c243683bc2eb41262029146080820c622a8e8609bf130e"
+    },
+    {
+      "file": "CLAUDE.md",
+      "sha256": "c84ef41e3dce59e00895be9e8ef304fa08912dbd6c857888ad7fba6f47ffbe16"
+    },
+    {
+      "file": "CONTRIBUTING.md",
+      "sha256": "efba58f34fbafa2de9661dbe5b830dfea6708a02c01c842c06e88115320e8268"
+    },
+    {
+      "file": "docs/contributing.md",
+      "sha256": "64365a30827c06293c049e3da9b49a95f5672eed390c3b8662db877f0f8b13fc"
+    },
+    {
+      "file": "docs/prototype-development.md",
+      "sha256": "f1bc5b7eaad9c3b71b5f8b5d1feda4beee2da53753b288f52fef97acdcc06d9e"
+    }
+  ]
+}

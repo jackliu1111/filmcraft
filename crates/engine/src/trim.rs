@@ -204,8 +204,28 @@ fn trim_all_raw(s: &mut Session, delta_for: &dyn Fn(&Sequence, &EditPoint) -> Op
     }
     let pts = s.state.edit_points.clone();
     let mut applied = Vec::new();
+    let mut target_edges = Vec::new();
+    let mut target_rolls = Vec::new();
     for ep in &pts {
         let seq = s.active_sequence().ok_or(EngineError::NoSequence)?;
+        if ep.kind == TrimKind::Roll
+            && crate::contiguous_edit::is_target(seq, ep.clip)
+            && let Some((left, right)) = roll_pair(seq, ep)
+        {
+            let unit = |id| crate::contiguous_edit::selection(seq, &[id]).into_iter().map(|c| c.0).min().unwrap_or(id.0);
+            let pair = (unit(left), unit(right));
+            if target_rolls.contains(&pair) {
+                continue;
+            }
+            target_rolls.push(pair);
+        }
+        if ep.kind != TrimKind::Roll && crate::contiguous_edit::is_target(seq, ep.clip) {
+            let unit = crate::contiguous_edit::selection(seq, &[ep.clip]).into_iter().map(|c| c.0).min().unwrap_or(ep.clip.0);
+            if target_edges.contains(&(unit, ep.out)) {
+                continue;
+            }
+            target_edges.push((unit, ep.out));
+        }
         let Some(delta) = delta_for(seq, ep) else { continue };
         let r = match ep.kind {
             TrimKind::Roll => {
@@ -260,6 +280,18 @@ pub fn to_playhead(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         selected
     };
+    if let Some(target) = seq.editing_track.as_ref()
+        && tracks.iter().any(|id| *id == target.video || target.audio.contains(id))
+        && let Some(clip) = seq.track(target.video).and_then(|tr| tr.item_at(ph)).filter(|c| c.start < ph && ph < c.end())
+    {
+        let (id, start, end) = (clip.id, clip.start, clip.end());
+        let range = if next { TimeRange::from_bounds(ph, end) } else { TimeRange::from_bounds(start, ph) };
+        s.execute("timeline.trim", json!({"clip":id.0,"edge":if next {"out"} else {"in"},"mode":"ripple","delta":if next {(ph-end).0} else {(ph-start).0}}))?;
+        if !next {
+            s.set_playhead(start);
+        }
+        return Ok(json!({"range":[range.start.0,range.end().0]}));
+    }
     if tracks.is_empty() {
         return Err(EngineError::Other("no clip under the playhead on the targeted tracks".into()));
     }

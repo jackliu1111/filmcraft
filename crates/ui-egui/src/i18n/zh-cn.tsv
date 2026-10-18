@@ -280,6 +280,7 @@
 	Review	审阅
 	Right	右
 	Ripple Delete	波纹删除
+	Ripple Delete Head Frame	波纹删除头部帧
 	Ripple Sequence Markers	波纹序列标记
 	Rose	玫瑰红
 	Safe Margins	安全边距
@@ -3420,6 +3421,7 @@
 	in	入
 	The language changed but could not be saved: {e}	语言已更改但无法保存：{e}
 	no Chinese font is installed on this system; the interface stays in English	此系统未安装中文字体；界面保持英文
+	no Korean font is installed on this system; the interface stays in English	此系统未安装韩文字体；界面保持英文
 	no Japanese font is installed on this system; the interface stays in English	此系统未安装日语字体；界面保持英文
 	Show	显示
 	Sort	排序
@@ -3583,3 +3585,12 @@
 	Shows the version, community links and credits in a FilmCraft window.	在 FilmCraft 窗口中显示版本、社区链接和致谢。
 	Couldn't open your web browser	无法打开网页浏览器
 	Open this address in your browser yourself:	请自行在浏览器中打开此地址：
+	Source time	原片时间
+	Sequence time	成片时间
+	Editing · A/V	声画关联剪辑轨
+	Use as Editing Track (A/V)	设为声画关联剪辑轨
+	Use Native Track Editing	使用原生轨道编辑
+	Show Associated Audio Tracks	展开关联音轨
+	Associated audio	关联音频
+	Shifted by insertion	插入后顺延
+	Track menu (right-click)	轨道菜单（右键）

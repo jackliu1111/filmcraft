@@ -29,6 +29,7 @@ macro_rules! tlf {
     };
 }
 
+pub mod apex_ai;
 pub mod automation;
 pub mod brand;
 pub mod calc;
@@ -53,8 +54,12 @@ pub mod perf;
 pub mod play_ahead;
 mod rtl;
 pub mod scrub;
+pub mod event_mapping;
+pub mod selection_drop;
+pub mod selection_ranges;
 mod shuttle;
 pub mod source_playback;
+pub mod source_recognition;
 pub mod state;
 pub mod theme;
 mod theme_favorites;
@@ -272,6 +277,8 @@ pub(crate) const EXPORT_SAVE_DIALOGS: [(&str, &str, &str); 7] = [
 ];
 
 pub struct FilmcraftApp {
+    pub selection_ranges: selection_ranges::State,
+    pub apex_ai: apex_ai::State,
     pub session: Session,
     pub ui: UiState,
     pub tokens: Tokens,
@@ -538,6 +545,8 @@ impl FilmcraftApp {
             session.prefs_path.as_ref().and_then(|p| p.parent()).map(|d| dock::WorkspacePrefs::load(&d.join(dock::WORKSPACES_FILE))).unwrap_or_default();
         let language = i18n::Language::parse(&session.prefs.general.interface_language).unwrap_or_default();
         Self {
+            apex_ai: Default::default(),
+            selection_ranges: Default::default(),
             session,
             ui: UiState { language, ..UiState::default() },
             tokens: Tokens::for_kind(ThemeKind::Dark),
@@ -720,6 +729,9 @@ impl FilmcraftApp {
             } else if language == i18n::Language::ZhCn && !i18n::chinese_font_available() {
                 self.ui.language = i18n::Language::En;
                 self.ui.status = tl!("no Chinese font is installed on this system; the interface stays in English").into();
+            } else if language == i18n::Language::Ko && !i18n::korean_font_available() {
+                self.ui.language = i18n::Language::En;
+                self.ui.status = tl!("no Korean font is installed on this system; the interface stays in English").into();
             } else {
                 self.ui.language = language;
             }
@@ -1450,6 +1462,9 @@ impl FilmcraftApp {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        if selection_ranges::handle_keys(self, ctx) {
+            return;
+        }
         let workspaces = (dock::names(&self.workspaces), self.ui.workspace.clone());
         if self.bindings_rev != self.session.shortcuts.revision || workspaces != self.menu_workspaces {
             self.menu_workspaces = workspaces;
@@ -1720,6 +1735,7 @@ impl FilmcraftApp {
         panels::metadata::follow_selection(self);
         self.frames.set_context(&ctx);
         self.session.poll_persistence();
+        apex_ai::poll(self, &ctx);
         panels::trim_monitor::advance(self, &ctx);
         if self.session.persistence.is_some() && self.session.is_dirty() {
             // Keep polling the auto-save worker (status, "also save the project" results).
@@ -1789,6 +1805,7 @@ impl FilmcraftApp {
         // the Timeline has had its chance to place a file drop this frame; anything left stays a bin import
         self.pending_timeline_drop = None;
         panels::dialogs::show(self, &ctx);
+        apex_ai::show(self, &ctx);
         if !self.ui.show_status_bar {
             // no bar to draw the job in, but a finished preview render still plays
             self.watch_jobs(ui.ctx());
@@ -2042,9 +2059,12 @@ impl eframe::App for FilmcraftApp {
             theme::install(ctx, &self.tokens);
             // theme::install replaces the fonts: add the system Japanese font back (or fall back to
             // English when a saved Japanese setting meets a system without one)
-            // (likewise Chinese without a Chinese face)
+            // (likewise Chinese without a Chinese face, Korean without a Hangul one)
             let japanese_missing = self.ui.language == i18n::Language::Ja && !i18n::install_japanese_font(ctx);
-            if japanese_missing || (self.ui.language == i18n::Language::ZhCn && !i18n::chinese_font_available()) {
+            if japanese_missing
+                || (self.ui.language == i18n::Language::ZhCn && !i18n::chinese_font_available())
+                || (self.ui.language == i18n::Language::Ko && !i18n::korean_font_available())
+            {
                 self.ui.language = i18n::Language::En;
             }
             self.styled = true;
@@ -2087,6 +2107,7 @@ impl eframe::App for FilmcraftApp {
     }
 
     fn on_exit(&mut self) {
+        self.apex_ai.shutdown();
         // Flush the recovery journal and stop the auto-save worker; a session with nothing unsaved
         // removes its journal, one with unsaved changes keeps it for the next launch.
         self.session.shutdown();

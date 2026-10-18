@@ -129,12 +129,19 @@ fn payload_id() -> egui::Id {
 pub fn start_drag_source(ui: &egui::Ui, source: source_drag::SourceDrag) {
     ui.ctx().data_mut(|d| d.insert_temp(payload_id(), Some(DragPayloadBox(DragPayload::Source(source)))));
 }
-pub fn dragged_source(ui: &egui::Ui) -> Option<source_drag::SourceDrag> {
-    match payload(ui) {
+pub fn source_drag_in_context(ctx: &egui::Context) -> Option<source_drag::SourceDrag> {
+    match ctx.data(|d| d.get_temp::<Option<DragPayloadBox>>(payload_id())).flatten().map(|b| b.0) {
         Some(DragPayload::Source(s)) => Some(s),
         _ => None,
     }
 }
+pub fn dragged_source(ui: &egui::Ui) -> Option<source_drag::SourceDrag> {
+    source_drag_in_context(ui.ctx())
+}
+pub fn dragged_timeline_item(ui: &egui::Ui) -> Option<ItemId> {
+    dragged_source(ui).map(|s| s.item).or_else(|| dragged_project_item(ui))
+}
+
 pub fn start_drag_item(ui: &egui::Ui, item: ItemId) {
     ui.ctx().data_mut(|d| d.insert_temp(payload_id(), Some(DragPayloadBox(DragPayload::Item(item)))));
 }
@@ -175,7 +182,7 @@ fn payload(ui: &egui::Ui) -> Option<DragPayload> {
 pub fn dragged_project_item(ui: &egui::Ui) -> Option<ItemId> {
     match payload(ui) {
         Some(DragPayload::Item(i)) => Some(i),
-        Some(DragPayload::Source(s)) => Some(s.item),
+        Some(DragPayload::Source(s)) if s.selection.is_none() => Some(s.item),
         _ => None,
     }
 }
@@ -202,9 +209,14 @@ fn cancelled_id() -> egui::Id {
 
 /// Abandon the drag in progress (Escape, #580): nothing is dropped, and nothing restarts it until
 /// the button comes up.
+pub fn cancel_drag_context(ctx: &egui::Context) {
+    ctx.data_mut(|d| {
+        d.insert_temp::<Option<DragPayloadBox>>(payload_id(), None);
+        d.insert_temp(cancelled_id(), true);
+    });
+}
 pub fn cancel_drag(ui: &egui::Ui) {
-    clear_drag(ui);
-    ui.ctx().data_mut(|d| d.insert_temp(cancelled_id(), true));
+    cancel_drag_context(ui.ctx());
 }
 
 /// Whether the press in progress had its drag cancelled with Escape.
@@ -219,6 +231,14 @@ pub fn drag_ghost(app: &FilmcraftApp, ui: &egui::Ui) {
     }
     let Some(pl) = payload(ui) else { return };
     let ctx = ui.ctx();
+    if let DragPayload::Source(source) = &pl
+        && let Some(snapshot) = source.selection
+    {
+        if filmcraft_engine::selection_placement::parameters(&app.session, snapshot, &serde_json::json!({"append":true})).is_err() {
+            cancel_drag(ui);
+            return;
+        }
+    }
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         cancel_drag(ui);
         return;
@@ -237,7 +257,8 @@ pub fn drag_ghost(app: &FilmcraftApp, ui: &egui::Ui) {
                     (true, false) => "video",
                     _ => "audio",
                 };
-                format!("{name} · {mode} · {:.2} s", s.range.duration.seconds())
+                let usage = if s.selection.is_some() { format!(" · {}", crate::selection_drop::usage_label(app, s.item, s.range)) } else { String::new() };
+                format!("{name} · {mode} · {:.2} s{usage}", s.range.duration.seconds())
             }
             DragPayload::Template(_, name) => name.clone(),
             DragPayload::Effect(e) => match (e.strip_prefix("preset:"), e.strip_prefix(LUMETRI_PRESET_PREFIX)) {

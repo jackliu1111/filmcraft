@@ -1,0 +1,21 @@
+{
+  "purpose": "Disposable UI preview fixture; not a new model output or recognition result",
+  "source": "2026-08-09 15-31-44.mkv",
+  "source_duration_s": 496.65,
+  "source_video_start_time_s": 0.0,
+  "preview": "demo-preview.mp4",
+  "preview_duration_s": 120.0,
+  "preview_source_start_s": 0.0,
+  "preview_source_end_s": 120.0,
+  "timeline_mapping": "source_video_time_s = preview.currentTime + 0.0; preview covers only [0, 120) of the source",
+  "preview_width": 640,
+  "preview_height": 360,
+  "preview_fps": 12,
+  "preview_codec": "H.264/AVC, yuv420p, MP4 faststart",
+  "preview_has_audio": false,
+  "poster": "demo-poster.jpg",
+  "poster_preview_time_s": 10.0,
+  "poster_source_video_time_s": 10.0,
+  "source_modified": false,
+  "source_availability": "Original recording is local only and is not included; the preview and poster below are bundled."
+}

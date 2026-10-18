@@ -15,11 +15,57 @@ pub struct SourcePlayback {
     pub clock: Playback,
     item: Option<ItemId>,
     shown: Tick,
+    incarnation: u64,
+    audition: Option<(u64, ItemId, usize)>,
+    audition_failed: bool,
     range_start: Option<Tick>,
     failure: Arc<Mutex<Option<String>>>,
 }
 
+impl SourcePlayback {
+    pub fn audition_stream(&self) -> Option<usize> {
+        self.audition.map(|(_, _, stream)| stream)
+    }
+    pub fn audition_failed(&self) -> bool {
+        self.audition_failed
+    }
+}
+
 impl FilmcraftApp {
+    /// Audition one native audio stream without modifying media interpretation,
+    /// project track mutes or the Program mix. The decoder and audio device must
+    /// both be available before this can count as a successful audition start.
+    pub fn audition_source_audio(&mut self, item: ItemId, stream: usize) -> Result<(), String> {
+        self.clear_source_audition();
+        let media = self.session.project.item(item).and_then(|i| i.as_media()).ok_or("原片不可用")?;
+        if media.offline || media.proxy.is_some() || media.interpret != Default::default() || stream >= media.info.audio_streams.len() {
+            return Err("无法试听：原片离线、使用代理、自定义解读或音轨不存在".into());
+        }
+        let audio = self.audio.as_ref().ok_or("没有可用的音频输出设备，无法试听")?;
+        let sr = audio.sample_rate();
+        if sr == 0 || audio.channels() == 0 {
+            return Err("音频输出设备的参数无效".into());
+        }
+        let source = self.session.media.source_for(&self.session.project, item, &*self.session.services).ok_or("原片音轨无法解码")?;
+        source.audio_stream(stream, 0, (sr / 20).max(1) as usize, sr).map_err(|e| format!("音轨试听解码失败：{e}"))?;
+        self.session.execute("source.open", json!({"item":item.0})).map_err(|e| e.to_string())?;
+        self.source_playback.audition = Some((self.session.recognition_jobs.incarnation, item, stream));
+        self.source_playback.audition_failed = false;
+        self.play_source()?;
+        if !self.source_playback.clock.audio_clock {
+            self.clear_source_audition();
+            return Err(format!("音轨试听未能启动：{}", self.ui.status));
+        }
+        Ok(())
+    }
+
+    pub fn clear_source_audition(&mut self) {
+        if self.source_playback.audition.is_some() {
+            self.stop_source();
+        }
+        self.source_playback.audition = None;
+    }
+
     pub fn toggle_source_play(&mut self) -> Result<(), String> {
         if self.source_playback.clock.playing {
             self.stop_source();
@@ -93,6 +139,7 @@ impl FilmcraftApp {
         let time = self.session.state.source_playhead;
         self.source_playback.range_start = start;
         self.source_playback.item = Some(item);
+        self.source_playback.incarnation = self.session.recognition_jobs.incarnation;
         self.source_playback.shown = time;
         self.source_playback.clock = Playback { playing: true, speed, anchor_time: -1.0, anchor_tick: time, looping, stop_at: stop, ..Default::default() };
         self.source_playback.clock.meter.start(speed);
@@ -139,6 +186,11 @@ impl FilmcraftApp {
             self.ui.status = "Source audio output has an invalid sample rate or channel count".into();
             return;
         }
+        let stream = self
+            .source_playback
+            .audition
+            .filter(|(incarnation, selected, _)| *incarnation == self.session.recognition_jobs.incarnation && *selected == item)
+            .map_or(0, |(_, _, stream)| stream);
         let map = [self.session.prefs.audio_hardware.map_left, self.session.prefs.audio_hardware.map_right];
         let mixdown = filmcraft_audio_dsp::channels::Mixdown::from_id(&self.session.prefs.audio.mixdown_type).unwrap_or_default();
         let channels = media.interpret.audio_channels.as_ref().and_then(|m| m.clips.first()).cloned().unwrap_or_default();
@@ -157,7 +209,7 @@ impl FilmcraftApp {
                 return;
             }
             let frames = (buf.len() / ch).min(usize::try_from(end.saturating_sub(cursor)).unwrap_or(0));
-            match source.audio(cursor, frames, sr) {
+            match source.audio_stream(stream, cursor, frames, sr) {
                 Ok(mut sound) => {
                     if !channels.is_empty() {
                         sound.channels = channels.iter().filter_map(|c| sound.channels.get(usize::from(*c)).cloned()).collect();
@@ -194,6 +246,11 @@ impl FilmcraftApp {
         if !self.source_playback.clock.playing {
             return;
         }
+        if self.source_playback.incarnation != self.session.recognition_jobs.incarnation {
+            self.clear_source_audition();
+            self.stop_source();
+            return;
+        }
         let item = self.source_playback.item;
         let Some(view) = item.filter(|i| Some(*i) == self.session.state.source_item).and_then(|i| source_view(&self.session, i)) else {
             self.stop_source();
@@ -201,6 +258,7 @@ impl FilmcraftApp {
         };
         let error = self.source_playback.failure.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
         if let Some(error) = error {
+            self.source_playback.audition_failed = true;
             self.stop_source();
             self.ui.status = error;
             return;
@@ -236,6 +294,7 @@ impl FilmcraftApp {
             if let Some(audio) = self.audio.as_mut() {
                 audio.stop();
             }
+            self.source_playback.audition_failed = true;
             self.ui.status = "Source audio output stopped responding: playing without sound (check Settings ▸ Audio Hardware)".into();
         }
         let elapsed = match reading {

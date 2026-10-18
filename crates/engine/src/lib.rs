@@ -10,12 +10,16 @@
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable))]
 
+mod analysis_queue;
 pub mod aaf_omf;
+mod assembly;
 pub mod autosave;
 pub mod captions;
 pub mod clip_ops;
 pub mod color;
 pub mod commands;
+pub mod contiguous;
+pub mod contiguous_edit;
 pub mod demo;
 pub mod essential_sound;
 pub mod export_tools;
@@ -41,10 +45,16 @@ pub mod project_manager;
 pub mod project_panel;
 pub mod project_tools;
 pub mod proxies;
+pub mod recognition;
+mod recognition_recovery;
 pub mod relink;
 pub mod remix;
 pub mod scene_detect;
 pub mod scopes;
+pub mod event_mapping;
+pub mod selection;
+pub mod selection_placement;
+pub mod selection_usage;
 pub mod sequence_extras;
 pub mod sequence_tools;
 pub mod settings;
@@ -377,9 +387,12 @@ pub enum Event {
 }
 
 pub struct Session {
+    pub recognition_jobs: recognition::Jobs,
     pub project: Arc<Project>,
     pub history: History,
     pub revision: u64,
+    /// Operational analysis metadata revisions, excluded from edit-preview invalidation.
+    analysis_metadata_updates: u64,
     pub saved_revision: u64,
     pub path: Option<String>,
     pub state: EditorState,
@@ -496,8 +509,10 @@ impl Session {
     pub fn new(services: Arc<dyn Services>) -> Self {
         Self {
             project: Arc::new(Project::new("Untitled")),
+            recognition_jobs: Default::default(),
             history: History { limit: 200, ..Default::default() },
             revision: 1,
+            analysis_metadata_updates: 0,
             saved_revision: 1,
             path: None,
             state: EditorState {
@@ -605,13 +620,16 @@ impl Session {
     /// channel send; serialization happens on the worker). Called after every command.
     pub fn sync_persistence(&mut self) {
         let dirty = self.is_dirty();
+        // Original baselines may be viewed or edited provisionally, but auto-save must never
+        // overwrite them. Unsaved edits can still enter the recovery ring under an untitled path.
+        let path = self.path.as_ref().filter(|p| !assembly::protected_original(&self.project, p)).cloned();
         let Some(p) = self.persistence.as_mut() else { return };
-        let cur = autosave::Sent { revision: self.revision, saved_revision: self.saved_revision, path: self.path.clone() };
+        let cur = autosave::Sent { revision: self.revision, saved_revision: self.saved_revision, path: path.clone() };
         if p.last_sent.as_ref() == Some(&cur) {
             return;
         }
         if dirty {
-            p.send_dirty(self.project.clone(), self.revision, self.path.clone());
+            p.send_dirty(self.project.clone(), self.revision, path);
         } else {
             p.send_clean();
         }
@@ -1049,6 +1067,12 @@ impl Session {
         }
     }
 
+    /// Changes that can affect a captured editing preview. Queue status still
+    /// increments `revision` for persistence without interrupting a range drag.
+    pub fn editing_revision(&self) -> u64 {
+        self.revision.saturating_sub(self.analysis_metadata_updates)
+    }
+
     fn bump(&mut self) {
         self.revision += 1;
         self.events.push(Event::ProjectChanged { revision: self.revision });
@@ -1236,6 +1260,8 @@ mod gap_selection_tests;
 #[cfg(test)]
 mod image_sequence_tests;
 #[cfg(test)]
+mod individual_selection_tests;
+#[cfg(test)]
 mod interchange_auto_points_tests;
 #[cfg(test)]
 mod keyboard_tests;
@@ -1288,6 +1314,8 @@ mod remix_tests;
 #[cfg(test)]
 mod ripple_delete_tests;
 #[cfg(test)]
+mod ripple_head_tests;
+#[cfg(test)]
 mod roll_linked_tests;
 #[cfg(test)]
 mod scopes_tests;
@@ -1319,9 +1347,27 @@ mod vfx_tests;
 mod voiceover_tests;
 
 #[cfg(test)]
+mod contiguous_editing_tests;
+#[cfg(test)]
+mod contiguous_ripple_tests;
+#[cfg(test)]
 mod source_placement_tests;
 
 #[cfg(test)]
 mod frame_export_tests;
 #[cfg(test)]
 mod wasm_clock_tests;
+
+#[cfg(test)]
+mod recognition_tests;
+
+#[cfg(test)]
+mod selection_tests;
+
+#[cfg(test)]
+mod selection_placement_tests;
+#[cfg(test)]
+mod assembly_tests;
+
+#[cfg(test)]
+mod event_mapping_tests;

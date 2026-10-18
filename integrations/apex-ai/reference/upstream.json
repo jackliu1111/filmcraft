@@ -1,0 +1,9 @@
+{
+  "upstream": "https://github.com/storytold/filmcraft",
+  "tag": "v0.7.2",
+  "revision": "71438c627b5cbcfb550526c3971f4d0037733c5c",
+  "patch": "apex-ai.patch",
+  "patch_sha256": "b3bd7135aeedaf6497fc73492d30edef720a6ac72cc9249c4a5a5cc5de6824a8",
+  "verified_platform": "macOS 27.0.1 arm64, Apple M4",
+  "artifact_type": "local development prototype; existing AI runtime referenced, not bundled"
+}

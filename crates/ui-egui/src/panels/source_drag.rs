@@ -13,6 +13,7 @@ pub struct SourceDrag {
     pub range: TimeRange,
     pub video: bool,
     pub audio: bool,
+    pub selection: Option<filmcraft_engine::selection_placement::Snapshot>,
 }
 
 pub fn begin(app: &mut FilmcraftApp, ui: &egui::Ui, video: bool, audio: bool) {
@@ -26,7 +27,7 @@ pub fn begin(app: &mut FilmcraftApp, ui: &egui::Ui, video: bool, audio: bool) {
         return;
     }
     app.stop_source();
-    super::start_drag_source(ui, SourceDrag { item: view.media, range, video, audio });
+    super::start_drag_source(ui, SourceDrag { item: view.media, range, video, audio, selection: None });
 }
 
 pub fn controls(app: &mut FilmcraftApp, ui: &mut egui::Ui, row: Rect) {

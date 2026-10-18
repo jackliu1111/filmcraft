@@ -1,0 +1,47 @@
+<!doctype html>
+<!-- THROWAWAY UI PROTOTYPE: Select sound ranges and assemble linked audiovisual clips on one continuous editing lane.
+     User-selected A paradigm, integrated into A1 child rows; earlier B/C variants archived.
+     No model connection, no production mutations, no persistent storage. -->
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FilmCraft · AI 选片交互原型</title><link rel="stylesheet" href="styles.css"></head>
+<body>
+<header class="appbar"><div class="brand"><span class="brandmark">F<span>c</span></span><strong>FilmCraft</strong><span class="prototype-tag">PROTOTYPE</span></div><nav><button id="import-trigger">导入</button><span class="nav-active">编辑</span><span class="nav-disabled" title="本原型不执行导出">导出</span></nav><div class="project-title">Apex · 声音选片练习<span class="unsaved">●</span></div><div class="header-actions"><button id="save-sim">保存快照</button><button id="restore-sim" disabled>模拟重开</button><button id="guide-open" class="accent-quiet">操作导览 <span>?</span></button></div></header>
+<div class="prototype-banner"><span class="live-dot"></span><span>交互原型 · 真实录屏预览，声音标记为演示数据，未调用模型</span><span class="banner-right">仅在本次页面内保存状态 <button id="state-open">查看完整状态 ↗</button></span></div>
+<main class="editor">
+ <section class="top-panes">
+  <section class="pane source-pane"><div class="tabs"><span class="tab selected">源</span><span class="tab muted">效果控件</span><span class="tab muted">元数据</span><span class="tab-end" id="source-name">Apex 录屏 · 02:00</span></div>
+   <div class="viewer source-view"><video id="source-video" src="demo-preview.mp4" poster="demo-poster.jpg" muted playsinline preload="metadata"></video><span class="viewer-label">原片预览</span><span class="viewer-meta">120 秒预览 · 静音代理</span></div>
+   <div class="monitor-controls"><time id="source-time">00:10.00</time><div class="transport"><button id="prev-event" title="上一个识别事件" aria-label="上一个识别事件">Ⅰ‹</button><button id="play-source" title="播放原片" aria-label="播放原片">▶</button><button id="next-event" title="下一个识别事件" aria-label="下一个识别事件">›Ⅰ</button></div><span class="total-time">原片 02:00.00</span></div>
+   <div class="source-context-note">识别结果已合并到下方音频轨 · 点选子行高亮定位原片</div>
+  </section>
+  <section class="pane program-pane"><div class="tabs"><span class="tab selected">节目</span><span class="tab-end" id="program-label">手动选片</span></div><div class="viewer program-view"><video id="program-video" src="demo-preview.mp4" poster="demo-poster.jpg" muted playsinline preload="metadata"></video><div id="program-empty"><span class="empty-frame">▱</span><strong>从声音里，找到值得留下的画面</strong><p>从 A1 下拖入剪辑轨，画面与声音一起自动拼接</p></div><span class="viewer-label">成片预览</span><span class="viewer-meta" id="program-source"></span></div><div class="monitor-controls"><time id="sequence-time">00:00.00</time><div class="transport"><button id="program-start" aria-label="回到成片开头">Ⅰ‹</button><button id="play-program" aria-label="播放成片">▶</button></div><span class="total-time" id="sequence-duration">成片 00:00.00</span></div><div class="program-note"><span class="small-dot"></span><span id="program-note">先挑片，再决定成片。原片始终保留。</span></div></section>
+  <aside class="pane inspector"><div class="tabs"><span class="tab selected">选片属性</span><span class="tab-end">原片时间</span></div><div id="inspector-content"></div><div class="draft-block"><div class="section-eyebrow">快速组稿</div><p>按当前范围生成草稿</p><label class="check"><input id="include-voice" type="checkbox"> 同时包含人声</label><button id="create-draft" class="primary">生成组稿原稿与编辑副本 <span>↗</span></button><small>使用已调整的范围 · 重叠合并 · 保留当前剪辑</small></div><div class="activity"><div class="section-eyebrow">刚刚发生</div><p id="last-action" role="status" aria-live="polite">选中一个高亮，拖动两端试试。</p></div></aside>
+ </section>
+ <section class="bottom-panes">
+  <aside class="pane project-pane"><div class="tabs"><span class="tab selected">项目</span><span class="tab muted">历史</span><span class="tab-end" id="asset-count">1 个素材</span></div><div class="project-search">⌕ <span>当前练习素材</span></div><div class="asset-card" id="demo-asset"><div class="asset-thumb"><img src="demo-poster.jpg" alt="Apex 录像预览"><span>02:00</span></div><div class="asset-info"><span class="asset-square"></span><span id="asset-name">Apex 录屏 · 演示素材</span><span id="asset-state">已就绪</span></div></div><div class="project-actions"><button id="import-demo">＋ 导入演示素材</button><button id="import-local">选择本地视频…</button><input type="file" id="file-input" accept="video/*,.mkv" hidden></div><p class="media-disclosure">导入流程与识别进度为交互模拟。<br>本地视频只供本机预览，不会上传。</p><div id="import-items"></div></aside>
+  <div class="tool-rail"><button class="tool-active" title="选择">↖</button><span title="范围">⌶</span><span title="吸附">∩</span><span title="关联声画">∞</span></div>
+  <section class="pane timeline-pane">
+   <div class="timeline-top"><select id="sequence-select" aria-label="当前剪辑序列"></select><span id="readonly-badge" class="readonly" hidden>原稿 · 只读</span><span class="spacer"></span><button id="undo" title="撤销时间线操作">↶ 撤销</button><button id="delete-clip" disabled>删除片段</button><button id="switcher-state" title="查看完整原型状态">状态</button><span class="timeline-stats" id="timeline-stats"></span></div>
+   <div class="timeline-toolbar"><time id="timeline-time">00:10.00</time><span class="insertion-label">同一时间尺</span><span class="muted small timeline-hint">拖入自动拼接 · 片段间插入 · 声画一起编辑</span><span class="spacer"></span><button id="zoom-out" title="缩小整个时间线">−</button><span id="zoom-label">全片</span><button id="zoom-in" title="所有轨道同步放大到选中范围">＋</button><button id="zoom-reset" class="plain small">全片</button><button id="fit-timeline" hidden>适配</button></div>
+   <div class="timeline-scroll" id="timeline-scroll">
+    <div id="timeline-ruler"></div>
+    <div class="timeline-row source-video-row"><div class="track-header"><b>V1</b><span>原片画面</span></div><div class="track-canvas video-track source-canvas" id="video-track"></div></div>
+    <div class="timeline-row source-audio-row"><div class="track-header"><b>A1</b><button id="toggle-lanes" class="plain" aria-label="展开或收起声音分类子行"><span id="fold-arrow">⌄</span> 声音</button></div><div class="track-canvas audio-track source-canvas" id="audio-track"></div></div>
+    <div id="recognition-content"><div id="recognition"></div></div>
+    <div id="analysis-progress" class="analysis-progress" hidden><div class="progress-caption"><span id="analysis-text"></span><button id="cancel-analysis" class="plain small">取消</button></div><div class="progress-track"><i id="progress-fill"></i></div></div>
+    <div class="timeline-row editing-row"><div class="track-header"><b>AV</b><span>剪辑轨<small>声画关联</small></span></div><div class="track-canvas linked-track" id="edit-track" data-drop-track="sequence" aria-label="剪辑轨，声画关联，拖入自动拼接"></div></div>
+    <div id="drop-line" hidden><span></span></div><div id="timeline-playhead"></div>
+   </div>
+   <div class="timeline-bottom"><span id="range-description"></span><button id="range-reset" class="plain small">重置范围</button><span class="spacer"></span><span id="selection-info">原片保留 · 拖动后独立剪辑</span></div>
+  </section>
+  <div class="meter"><span>0</span><div class="meter-bars"></div><span>−∞</span></div>
+ </section>
+</main>
+<footer><span id="footer-status">已加载演示状态 · 不触发真实识别</span><div>Shift + Enter：追加到末尾　·　拖到片段之间：插入　·　Esc：取消</div></footer>
+
+<div id="drag-ghost" hidden></div><div id="toast" role="status" hidden></div>
+<dialog id="guide-dialog"><div class="dialog-heading"><div><span class="section-eyebrow">动手试用</span><h2>声音选片的三个关键体验</h2></div><button class="close-dialog" aria-label="关闭">×</button></div><div class="guide-tabs"><button data-guide="trim" class="active">调范围 → 拖入</button><button data-guide="overlap">重叠与重复</button><button data-guide="restore">保存与继续</button></div><div id="guide-body"></div><div class="dialog-foot"><button id="guide-reset">重新开始此场景</button><button id="guide-next" class="primary">开始体验</button></div></dialog>
+<dialog id="state-dialog"><div class="dialog-heading"><div><span class="section-eyebrow">原型状态</span><h2>事件、待剪范围和成片分别保留</h2></div><button class="close-dialog" aria-label="关闭">×</button></div><div id="state-body"></div><div class="dialog-foot"><span>刷新页面会清空所有原型状态。</span><button id="reset-all">重置整个原型</button></div></dialog>
+<dialog id="import-dialog"><div class="dialog-heading"><h2>体验导入后自动识别</h2><button class="close-dialog" aria-label="关闭">×</button></div><p class="dialog-description">以下使用同一份演示标记来体验任务状态，不会运行声音模型。</p><div class="import-options"><button data-import="single"><b>单音轨素材</b><span>导入即开始，完成后展示高亮</span></button><button data-import="multi"><b>多音轨素材</b><span>先选择分析音轨，再开始</span></button><button data-import="queue"><b>一次导入两个素材</b><span>排队处理，仍可继续编辑</span></button></div><div id="audio-choice" hidden><label>用于分析的音轨 <select id="audio-track-choice"><option>音轨 1 · 游戏与队伍声音</option><option>音轨 2 · 麦克风</option></select></label><p class="small muted">演示预览为静音代理，此处仅模拟音轨选择，不提供真实试听。</p><button id="confirm-audio" class="primary">选择并开始演示</button></div></dialog>
+<script src="state.js"></script><script src="app.js"></script>
+</body></html>
