@@ -19,8 +19,27 @@ pub struct Snapshot {
     pub audio_track: TrackId,
     #[serde(with = "signature_hex")]
     pub source_signature: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recognition: Option<RecognitionProof>,
     pub video: bool,
     pub audio: bool,
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct RecognitionProof {
+    #[serde(with = "signature_hex")]
+    signature: u64,
+}
+fn recognition_proof(s: &Session, item: ItemId) -> Result<RecognitionProof> {
+    let record = s.project.recognition.get(&item).ok_or_else(|| invalid("待剪范围所依据的分析关联缺失，请重新分析或手动划选"))?;
+    if record["status"] != "completed" || record["audioStream"] != record["result"]["media"]["selected_audio"]["stream_index"] {
+        return Err(invalid("待剪范围的分析状态或音轨关联不完整"));
+    }
+    // Saved event evidence does not require its external score/cache files to remain available.
+    crate::recognition::check_saved(s, item, &record["result"])?;
+    let provenance = serde_json::to_vec(&(&record["result"], &record["audioStream"])).map_err(|e| invalid(e.to_string()))?;
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    provenance.hash(&mut hash);
+    Ok(RecognitionProof { signature: hash.finish() })
 }
 impl Snapshot {
     pub fn range(self) -> TimeRange {
@@ -60,6 +79,15 @@ pub(crate) fn source_signature(s: &Session, item: ItemId) -> Result<u64> {
 }
 pub fn capture(s: &Session, item: ItemId, range_id: &str) -> Result<Snapshot> {
     let range = crate::selection::ranges(s, item)?.into_iter().find(|r| r.range_id == range_id).ok_or_else(|| invalid("待剪范围不存在"))?;
+    let recognition = if range.manual && range.result_id.is_none() {
+        None
+    } else {
+        let record = s.project.recognition.get(&item).ok_or_else(|| invalid("待剪范围所依据的分析关联缺失"))?;
+        if range.result_id.as_deref() != record["result"]["result_id"].as_str() {
+            return Err(invalid("待剪范围所依据的分析已被替换，请选择当前分析范围或手动划选"));
+        }
+        Some(recognition_proof(s, item)?)
+    };
     let sequence = s.state.active_sequence.ok_or(EngineError::NoSequence)?;
     let target = s.active_sequence().and_then(|q| q.editing_track.as_ref()).ok_or_else(|| invalid("请先指定声画剪辑轨"))?;
     let audio_track = *target.audio.first().ok_or_else(|| invalid("剪辑轨缺少关联声音"))?;
@@ -73,6 +101,7 @@ pub fn capture(s: &Session, item: ItemId, range_id: &str) -> Result<Snapshot> {
         video_track: target.video,
         audio_track,
         source_signature: source_signature(s, item)?,
+        recognition,
         video: pi.has_video(),
         audio: pi.has_audio(),
     };
@@ -86,6 +115,11 @@ fn validate(s: &Session, snapshot: Snapshot) -> Result<()> {
     let target = s.active_sequence().and_then(|q| q.editing_track.as_ref()).ok_or_else(|| invalid("当前没有声画剪辑轨"))?;
     if target.video != snapshot.video_track || target.audio.first().copied() != Some(snapshot.audio_track) {
         return Err(invalid("目标剪辑轨已变化"));
+    }
+    if let Some(proof) = snapshot.recognition {
+        if recognition_proof(s, snapshot.item)?.signature != proof.signature {
+            return Err(invalid("拖动所依据的分析已变化，请重新选择范围"));
+        }
     }
     let pi = s.project.item(snapshot.item).ok_or_else(|| invalid("原片已移除"))?;
     let end = snapshot.source_in.0.checked_add(snapshot.duration.0).ok_or_else(|| invalid("原片范围溢出"))?;

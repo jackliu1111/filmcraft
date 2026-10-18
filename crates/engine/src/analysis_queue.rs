@@ -3,7 +3,7 @@ use crate::{
     EngineError, Result, Session,
     commands::{CommandSpec, always, bad},
 };
-use filmcraft_project::{AnalysisTask, ItemId, MediaRef};
+use filmcraft_project::{AnalysisStatus as Status, AnalysisTask, ItemId, MediaRef};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -17,7 +17,7 @@ fn index(tasks: &[AnalysisTask], p: &Value) -> Result<usize> {
     let id = id(p)?;
     tasks.iter().position(|t| t.id == id).ok_or_else(|| error("分析任务不存在"))
 }
-fn current(tasks: &[AnalysisTask], p: &Value, status: &str) -> Result<usize> {
+fn current(tasks: &[AnalysisTask], p: &Value, status: Status) -> Result<usize> {
     let i = index(tasks, p)?;
     if p["attempt"].as_u64() != Some(u64::from(tasks[i].attempt)) || tasks[i].status != status {
         return Err(error("任务已取消、重试或状态已变化，忽略迟到响应"));
@@ -97,7 +97,7 @@ fn enqueue(s: &mut Session, p: &Value) -> Result<Value> {
         id: s.project.analysis_queue.iter().map(|t| t.id).max().unwrap_or(0).checked_add(1).ok_or_else(|| error("任务编号已耗尽"))?,
         item,
         attempt: 1,
-        status: if reason.is_some() { "unavailable" } else { "queued" }.into(),
+        status: if reason.is_some() { Status::Unavailable } else { Status::Queued },
         source_path: path,
         source_size_bytes: identity.map(|i| i.0),
         source_mtime_ns: identity.map(|i| i.1),
@@ -116,29 +116,29 @@ fn enqueue(s: &mut Session, p: &Value) -> Result<Value> {
 }
 fn start(s: &mut Session, p: &Value) -> Result<Value> {
     let mut tasks = (*s.project.analysis_queue).clone();
-    let i = current(&tasks, p, "queued")?;
-    if tasks.iter().position(|t| t.status == "queued") != Some(i) {
+    let i = current(&tasks, p, Status::Queued)?;
+    if tasks.iter().position(|t| t.status == Status::Queued) != Some(i) {
         return Err(error("请按就绪队列顺序领取任务"));
     }
-    if tasks.iter().any(|t| matches!(t.status.as_str(), "probing" | "running")) {
+    if tasks.iter().any(|t| t.status.has_worker()) {
         return Err(error("已有一个分析进程运行，请等待"));
     }
     if let Err(reason) = check_origin(s, &tasks[i]) {
-        tasks[i].status = "unavailable".into();
+        tasks[i].status = Status::Unavailable;
         tasks[i].error = Some(reason.to_string());
     } else if let Some(media) = tasks[i].media.clone() {
         match s.execute("recognition.begin", json!({"item":tasks[i].item.0,"audioStream":tasks[i].audio_stream,"media":media})) {
             Ok(origin) => {
                 tasks[i].token = origin["token"].as_u64();
-                tasks[i].status = "running".into();
+                tasks[i].status = Status::Running;
             }
             Err(e) => {
-                tasks[i].status = "unavailable".into();
+                tasks[i].status = Status::Unavailable;
                 tasks[i].error = Some(e.to_string());
             }
         }
     } else {
-        tasks[i].status = "probing".into();
+        tasks[i].status = Status::Probing;
     }
     let mut output = value(&tasks[i]);
     output["token"] = json!(tasks[i].token);
@@ -147,18 +147,18 @@ fn start(s: &mut Session, p: &Value) -> Result<Value> {
 }
 fn probed(s: &mut Session, p: &Value) -> Result<Value> {
     let mut tasks = (*s.project.analysis_queue).clone();
-    let i = current(&tasks, p, "probing")?;
+    let i = current(&tasks, p, Status::Probing)?;
     let media = p.get("media").ok_or_else(|| error("media is required"))?;
     match check_origin(s, &tasks[i]).and_then(|_| s.execute("recognition.mapAudio", json!({"item":tasks[i].item.0,"media":media}))) {
         Err(e) => {
-            tasks[i].status = "unavailable".into();
+            tasks[i].status = Status::Unavailable;
             tasks[i].error = Some(e.to_string());
         }
         Ok(_) => {
             let tracks = media["audio_tracks"].as_array().ok_or_else(|| error("音轨列表无效"))?;
             tasks[i].media = Some(media.clone());
             tasks[i].audio_stream = if tracks.len() == 1 { tracks[0]["stream_index"].as_u64() } else { None };
-            tasks[i].status = if tracks.len() == 1 { "queued" } else { "waiting_audio" }.into();
+            tasks[i].status = if tracks.len() == 1 { Status::Queued } else { Status::WaitingAudio };
         }
     }
     let output = value(&tasks[i]);
@@ -167,7 +167,7 @@ fn probed(s: &mut Session, p: &Value) -> Result<Value> {
 }
 fn select(s: &mut Session, p: &Value) -> Result<Value> {
     let mut tasks = (*s.project.analysis_queue).clone();
-    let i = current(&tasks, p, "waiting_audio")?;
+    let i = current(&tasks, p, Status::WaitingAudio)?;
     let audio = p["audioStream"].as_u64().ok_or_else(|| error("audioStream is required"))?;
     check_origin(s, &tasks[i])?;
     let media = tasks[i].media.as_ref().ok_or_else(|| error("请重新读取音轨"))?;
@@ -176,7 +176,7 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(error("所选音轨不存在"));
     }
     tasks[i].audio_stream = Some(audio);
-    tasks[i].status = "queued".into();
+    tasks[i].status = Status::Queued;
     let output = value(&tasks[i]);
     persist(s, tasks);
     Ok(output)
@@ -184,13 +184,13 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
 fn cancel(s: &mut Session, p: &Value) -> Result<Value> {
     let mut tasks = (*s.project.analysis_queue).clone();
     let i = index(&tasks, p)?;
-    if matches!(tasks[i].status.as_str(), "completed" | "cancelled") {
+    if !tasks[i].status.can_cancel() {
         return Ok(value(&tasks[i]));
     }
     if let Some(token) = tasks[i].token.take() {
         s.execute("recognition.cancel", json!({"token":token}))?;
     }
-    tasks[i].status = "cancelled".into();
+    tasks[i].status = Status::Cancelled;
     tasks[i].error = Some("用户已取消；迟到结果不会写入工程".into());
     let output = value(&tasks[i]);
     persist(s, tasks);
@@ -199,7 +199,7 @@ fn cancel(s: &mut Session, p: &Value) -> Result<Value> {
 fn fail(s: &mut Session, p: &Value) -> Result<Value> {
     let mut tasks = (*s.project.analysis_queue).clone();
     let i = index(&tasks, p)?;
-    if p["attempt"].as_u64() != Some(u64::from(tasks[i].attempt)) || !matches!(tasks[i].status.as_str(), "probing" | "running" | "queued" | "waiting_audio") {
+    if p["attempt"].as_u64() != Some(u64::from(tasks[i].attempt)) || !tasks[i].status.is_pending() {
         return Err(error("已过期的分析失败响应"));
     }
     let message = p["error"].as_str().filter(|v| !v.is_empty()).ok_or_else(|| error("失败原因缺失"))?;
@@ -216,31 +216,30 @@ fn fail(s: &mut Session, p: &Value) -> Result<Value> {
             | "core_runtime_unavailable"
             | "invalid_path"
             | "source_changed",
-        ) => "unavailable",
-        Some("task_cancelled") => "cancelled",
-        Some("service_interrupted") => "interrupted",
-        _ => "failed",
-    }
-    .into();
+        ) => Status::Unavailable,
+        Some("task_cancelled") => Status::Cancelled,
+        Some("service_interrupted") => Status::Interrupted,
+        _ => Status::Failed,
+    };
     let output = value(&tasks[i]);
     persist(s, tasks);
     Ok(output)
 }
 fn finish(s: &mut Session, p: &Value) -> Result<Value> {
     let mut tasks = (*s.project.analysis_queue).clone();
-    let i = current(&tasks, p, "running")?;
+    let i = current(&tasks, p, Status::Running)?;
     let token = tasks[i].token.ok_or_else(|| error("任务没有有效接收令牌"))?;
     let result = p.get("result").ok_or_else(|| error("result is required"))?;
     let origin = check_origin(s, &tasks[i]);
     let source_valid = origin.is_ok();
     match origin.and_then(|_| s.execute("recognition.attach", json!({"token":token,"result":result}))) {
         Ok(_) => {
-            tasks[i].status = "completed".into();
+            tasks[i].status = Status::Completed;
             tasks[i].result_id = result["result_id"].as_str().map(str::to_string);
             tasks[i].error = None;
         }
         Err(e) => {
-            tasks[i].status = if source_valid { "failed" } else { "unavailable" }.into();
+            tasks[i].status = if source_valid { Status::Failed } else { Status::Unavailable };
             tasks[i].error = Some(e.to_string());
             s.execute("recognition.cancel", json!({"token":token}))?;
         }
@@ -253,16 +252,16 @@ fn finish(s: &mut Session, p: &Value) -> Result<Value> {
 fn retry(s: &mut Session, p: &Value) -> Result<Value> {
     let mut tasks = (*s.project.analysis_queue).clone();
     let i = index(&tasks, p)?;
-    if tasks[i].status == "queued" {
+    if tasks[i].status == Status::Queued {
         return Ok(value(&tasks[i]));
     }
-    if matches!(tasks[i].status.as_str(), "probing" | "running" | "waiting_audio") {
+    if tasks[i].status.is_pending() {
         return Err(error("请先取消当前请求再重试"));
     }
     tasks[i].attempt = tasks[i].attempt.checked_add(1).ok_or_else(|| error("重试次数已耗尽"))?;
     let (path, mut reason) = availability(s, tasks[i].item);
     if !tasks[i].source_path.is_empty() && tasks[i].source_path != path {
-        tasks[i].status = "unavailable".into();
+        tasks[i].status = Status::Unavailable;
         tasks[i].error = Some("原素材已移除或被替换；请对新素材重新入队".into());
         let output = value(&tasks[i]);
         persist(s, tasks);
@@ -275,7 +274,7 @@ fn retry(s: &mut Session, p: &Value) -> Result<Value> {
     tasks[i].source_path = path;
     tasks[i].source_size_bytes = identity.map(|i| i.0);
     tasks[i].source_mtime_ns = identity.map(|i| i.1);
-    tasks[i].status = if reason.is_some() { "unavailable" } else { "queued" }.into();
+    tasks[i].status = if reason.is_some() { Status::Unavailable } else { Status::Queued };
     tasks[i].media = None;
     tasks[i].audio_stream = None;
     tasks[i].error = reason;
@@ -303,10 +302,10 @@ pub fn commands() -> Vec<CommandSpec> {
         make("analysis.retry", "主动重试分析", retry),
         make("analysis.list", "查看分析队列", |s, _| Ok(json!(s.project.analysis_queue))),
         make("analysis.next", "查看下一个分析任务", |s, _| {
-            if s.project.analysis_queue.iter().any(|t| matches!(t.status.as_str(), "probing" | "running")) {
+            if s.project.analysis_queue.iter().any(|t| t.status.has_worker()) {
                 return Ok(Value::Null);
             }
-            Ok(s.project.analysis_queue.iter().find(|t| t.status == "queued").map(value).unwrap_or(Value::Null))
+            Ok(s.project.analysis_queue.iter().find(|t| t.status == Status::Queued).map(value).unwrap_or(Value::Null))
         }),
     ]
 }
