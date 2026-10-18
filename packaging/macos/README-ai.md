@@ -33,14 +33,16 @@ before signing. The native editor is `Contents/MacOS/FilmCraft-core`; the
 Every real Mach-O is signed first, followed by enclosing framework/helper
 bundles, native core, launcher and app. Final verification uses
 `codesign --verify --strict --deep`; final signing does not use `--deep`.
-Only the frozen AI service receives `ai-service-entitlements.plist`'s
-`disable-library-validation` exception: its bundled Python framework and native
-extensions have ad-hoc signatures without a shared Team ID. The editor and app
-retain their existing entitlements. After strict verification, packaging runs
-the signed service's `--check-runtime` with external
-`<target>/macos-package/ai-signing-smoke` data before producing the DMG. Loader
-failure aborts packaging even when static signature verification succeeds;
-this check does not import the model.
+Only three process executables receive `ai-runtime-entitlements.plist`'s
+`disable-library-validation` exception: the frozen AI service and bundled
+FFmpeg/ffprobe. Their bundled Python/native extensions and media libraries have
+ad-hoc signatures without a shared Team ID. The editor, app and individual
+libraries retain their existing entitlements. After strict verification,
+packaging runs the signed service's `--check-runtime` with external
+`<target>/macos-package/ai-signing-smoke` data, then both bundled media tools'
+`-version` commands before producing the DMG. Any loader failure aborts packaging
+even when static signature verification succeeds; these checks do not import
+the model or process media.
 Manifest digests describe the staged runtime before code signing changes native
 bytes. The existing signing/notarization environment variables and defaults
 still apply; default ad-hoc signatures are for local testing. Developer ID
@@ -102,3 +104,9 @@ ordinary packaged startup still rejects the missing service. The public signing
 smoke CLI's controlled loader-failure test first failed because the command was
 absent, then passed with the error propagated to the packaging caller. These
 process fixtures are separate from actual signing and model acceptance.
+
+The relocated DMG later exposed the same Team ID failure in FFmpeg/ffprobe.
+The smoke fixture first returned success despite either media executable failing,
+then passed after both tools were added to startup checks. The fixture also
+verifies all three processes start with their expected public arguments when
+healthy. The signing exception now covers exactly those three executables.

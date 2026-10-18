@@ -2,10 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- PyInstaller loads the bundled Python framework and native extension DSOs.
+  <!-- The frozen Python service and FFmpeg/ffprobe load bundled native libraries.
        Ad-hoc signatures have no shared Team ID; library validation otherwise
-       rejects these bundled libraries before the frozen service can start.
-       Apply this exception only to the AI service, never the editor/app. -->
+       rejects these libraries before the runtime processes can start.
+       Apply only to these three process entry executables, never the editor,
+       outer app, or individual library signatures. -->
   <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
 </dict>

@@ -141,11 +141,13 @@ if [ -n "$AI_RUNTIME" ]; then
   # Materialize the inventory so an inventory failure cannot be lost in process substitution.
   python3 "$HERE/ai-package.py" signing-paths "$APP/Contents/Resources/ai-runtime" > "$WORK/ai-signing-paths"
   while IFS= read -r -d '' nested; do
-    if [ "$nested" = "$APP/Contents/Resources/ai-runtime/service/filmcraft-ai" ]; then
-      sign --options runtime --entitlements "$HERE/ai-service-entitlements.plist" "$nested"
-    else
-      sign --options runtime "$nested"
-    fi
+    case "$nested" in
+      "$APP/Contents/Resources/ai-runtime/service/filmcraft-ai"|\
+      "$APP/Contents/Resources/ai-runtime/service/_internal/bin/ffmpeg"|\
+      "$APP/Contents/Resources/ai-runtime/service/_internal/bin/ffprobe")
+        sign --options runtime --entitlements "$HERE/ai-runtime-entitlements.plist" "$nested" ;;
+      *) sign --options runtime "$nested" ;;
+    esac
   done < "$WORK/ai-signing-paths"
   sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP/Contents/MacOS/FilmCraft-core"
 fi
@@ -153,7 +155,7 @@ sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP/Contents/
 sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP"
 codesign --verify --strict --deep --verbose=2 "$APP"
 if [ -n "$AI_RUNTIME" ]; then
-  # A valid signature alone does not prove hardened Python can load its libraries.
+  # Valid signatures alone do not prove Python/media processes can load libraries.
   # WORK was verified as external storage before any package work began.
   mkdir -p "$WORK/ai-signing-smoke"
   python3 "$HERE/ai-package.py" smoke "$APP/Contents/Resources/ai-runtime" --data "$WORK/ai-signing-smoke"
