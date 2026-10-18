@@ -14,24 +14,28 @@ class RuntimeUnavailable(Exception):
 
 
 def external_data_volume(path):
-    """Verify physical storage, including disk images backed by external disks."""
+    """Require compatible data storage and verify its physical external backing."""
     mounts = []
     for line in subprocess.check_output(['/sbin/mount'], text=True, timeout=10).splitlines():
-        match = re.match(r'(/dev/\S+) on (.+) \(', line)
+        match = re.match(r'(/dev/\S+) on (.+) \(([^,\s)]+)', line)
         if match:
-            mounts.append(Path(match[2]).resolve())
+            mounts.append((Path(match[2]).resolve(), match[3].lower()))
     images = plistlib.loads(subprocess.check_output(['/usr/bin/hdiutil', 'info', '-plist'], timeout=10))
 
-    def verify(candidate, seen):
-        roots = [root for root in mounts if candidate.is_relative_to(root)]
+    def verify(candidate, seen, *, check_filesystem=True):
+        roots = [(root, filesystem) for root, filesystem in mounts if candidate.is_relative_to(root)]
         if not roots:
             raise ValueError('数据目录不在已挂载的外接卷上')
-        root = max(roots, key=lambda value: len(value.parts))
+        root, filesystem = max(roots, key=lambda value: len(value[0].parts))
+        if check_filesystem and filesystem not in ('apfs', 'hfs'):
+            raise ValueError('AI 数据目录须使用已挂载的外接 APFS 或 HFS（Mac OS 扩展）卷；也可选择外接盘上的 APFS 磁盘映像卷，不能直接使用 ExFAT 等不兼容文件系统')
         if root in seen:
             raise ValueError('外接数据卷的磁盘映像来源无效')
         for image in images.get('images', []):
             if any(entity.get('mount-point') == str(root) for entity in image.get('system-entities', [])):
-                return verify(Path(image['image-path']).resolve(), seen | {root})
+                # An APFS/HFS image may safely store its backing file on ExFAT;
+                # only the selected data filesystem must support task metadata.
+                return verify(Path(image['image-path']).resolve(), seen | {root}, check_filesystem=False)
         info = plistlib.loads(subprocess.check_output(['/usr/sbin/diskutil', 'info', '-plist', str(root)], timeout=10))
         if info.get('Internal') is not False:
             raise ValueError('数据目录必须位于可验证的外接卷上')

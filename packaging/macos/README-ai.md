@@ -48,8 +48,15 @@ bytes. The existing signing/notarization environment variables and defaults
 still apply; default ad-hoc signatures are for local testing. Developer ID
 notarization and a separate clean Mac require their own validation.
 
-On first launch from Finder, choose an existing folder on the mounted external
-volume for AI data. The frozen service's `--check-runtime` validates the runtime
+On first launch from Finder, choose an existing folder on a mounted external
+APFS or HFS (Mac OS Extended) volume for AI data. An APFS disk image backed by
+an external disk is supported; its physical backing disk may use ExFAT. The
+filesystem requirement applies to the selected data mount, and physical external
+backing is verified independently. Direct ExFAT data is rejected before cache/tmp
+creation or backend startup: macOS AppleDouble `._*.json` files can be mistaken
+for task JSON by the current shared backend. Use a compatible mounted volume or
+APFS image instead; the application does not fall back to local data storage.
+The frozen service's `--check-runtime` validates the runtime
 and external storage without importing the model. The launcher remembers only
 the literal path in a small per-user setting at
 `~/Library/Application Support/FilmCraft/ai-data-directory`. If the remembered
