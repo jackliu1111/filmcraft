@@ -129,6 +129,33 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(result.stdout.endswith('--version\n'))
 
+    def test_developer_overrides_launch_without_frozen_runtime_and_keep_explicit_options(self):
+        self.service.unlink()
+        core = self.macos / 'FilmCraft-core'
+        core.write_text('#!' + sys.executable + '\nimport json, os, sys\n'
+                        'print(json.dumps({"args":sys.argv[1:], "env":{key:os.environ.get(key) '
+                        'for key in ("FILMCRAFT_APEX_PYTHON", "FILMCRAFT_APEX_BRIDGE", '
+                        '"APEX_AI_DATA_DIR", "FILMCRAFT_DATA_DIR", "TMPDIR", "HF_HOME")}}))\n')
+        options = {'APEX_AI_DATA_DIR': str(self.data),
+                   'FILMCRAFT_DATA_DIR': str(self.data / 'native configured'),
+                   'TMPDIR': str(self.data / 'temporary configured'),
+                   'HF_HOME': str(self.data / 'cache configured')}
+        for overrides in ({'FILMCRAFT_APEX_PYTHON': '/developer path/python'},
+                          {'FILMCRAFT_APEX_BRIDGE': '/developer path/bridge.py'},
+                          {'FILMCRAFT_APEX_PYTHON': '', 'FILMCRAFT_APEX_BRIDGE': ''}):
+            with self.subTest(overrides=overrides):
+                result = self.run_launcher('素材 path.mp4', **options, **overrides)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout), {
+                    'args': ['素材 path.mp4'], 'env': options | {
+                        'FILMCRAFT_APEX_PYTHON': overrides.get('FILMCRAFT_APEX_PYTHON'),
+                        'FILMCRAFT_APEX_BRIDGE': overrides.get('FILMCRAFT_APEX_BRIDGE')}})
+                self.assertEqual([], list(self.data.iterdir()))
+        result = self.run_launcher('素材 path.mp4', **options)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('包内 AI 服务缺失或不可执行', result.stderr)
+        self.assertEqual(result.stdout, '')
+
     def test_apex_data_override_has_priority_over_filmcraft_data(self):
         result = self.run_launcher(APEX_AI_DATA_DIR=str(self.data),
                                    FILMCRAFT_AI_DATA_DIR=str(self.root / 'missing-data'))

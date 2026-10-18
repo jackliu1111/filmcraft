@@ -86,7 +86,11 @@ def runtime_environment(env):
         if not supplied:
             raise ValueError('请显式设置 APEX_AI_DATA_DIR 或 FILMCRAFT_AI_DATA_DIR 为可写的外接数据目录')
         data = Path(supplied).expanduser()
-        if not data.is_absolute() or not data.is_dir() or data.resolve().is_relative_to(root):
+        # A packaged runtime cannot write anywhere in its enclosing signed app,
+        # including ancestors/siblings of ai-runtime. Staged runtimes protect root.
+        readonly_root = next((parent for parent in reversed(root.parents)
+                              if parent.suffix.lower() == '.app'), root)
+        if not data.is_absolute() or not data.is_dir() or data.resolve().is_relative_to(readonly_root):
             raise ValueError('AI 数据目录须为包目录之外已存在的绝对目录')
         data = data.resolve()
         external_data_volume(data)

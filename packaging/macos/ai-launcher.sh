@@ -11,8 +11,13 @@ case "${1:-}" in
 esac
 
 fail() { printf 'FilmCraft: %s\n' "$*" >&2; exit 1; }
-[ -x "$SERVICE" ] || fail "包内 AI 服务缺失或不可执行，请重新安装完整应用。"
 [ -x "$CORE" ] || fail "原生应用缺失或不可执行，请重新安装完整应用。"
+# Match the native worker's explicit developer selection, including set-but-empty
+# overrides. Keep the developer's data/native options without frozen preflight.
+if [ "${FILMCRAFT_APEX_PYTHON+x}" = x ] || [ "${FILMCRAFT_APEX_BRIDGE+x}" = x ]; then
+  exec "$CORE" "$@"
+fi
+[ -x "$SERVICE" ] || fail "包内 AI 服务缺失或不可执行，请重新安装完整应用。"
 
 PREFERENCE_DIR="$HOME/Library/Application Support/FilmCraft"
 PREFERENCE="$PREFERENCE_DIR/ai-data-directory"
