@@ -531,6 +531,18 @@ mod native {
             let python = std::env::var_os("FILMCRAFT_APEX_PYTHON")
                 .unwrap_or_else(|| if model_python.is_file() { model_python.into_os_string() } else { "python3".into() });
             let bridge = std::env::var_os("FILMCRAFT_APEX_BRIDGE").unwrap_or_else(|| root.join("integrations/apex-ai/bridge.py").into_os_string());
+            // Explicit Python/script overrides select the developer entry. A declared
+            // bundle is authoritative: damaged resources must not use source paths.
+            let (program, bridge) = if std::env::var_os("FILMCRAFT_APEX_PYTHON").is_none()
+                && std::env::var_os("FILMCRAFT_APEX_BRIDGE").is_none()
+            {
+                match bundled_service()? {
+                    Some(service) => (service, None),
+                    None => (python, Some(bridge)),
+                }
+            } else {
+                (python, Some(bridge))
+            };
             let (sender, receiver) = sync_channel(64);
             let child = Arc::new(Mutex::new(None));
             let cancel = Arc::new(AtomicBool::new(false));
@@ -539,7 +551,7 @@ mod native {
                 .name("apex-ai-bridge".into())
                 .spawn(move || {
                     let work = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        bridge_run(python, bridge, &path, audio, validation.as_deref(), &worker_child, &worker_cancel, &sender, &ctx)
+                        bridge_run(program, bridge, &path, audio, validation.as_deref(), &worker_child, &worker_cancel, &sender, &ctx)
                     }));
                     let outcome = work.unwrap_or_else(|_| Err("AI 后台任务异常退出，当前项目未被替换。".into()));
                     terminate(&worker_child, true);
@@ -593,9 +605,46 @@ mod native {
         }
     }
 
+    fn bundled_service() -> Result<Option<std::ffi::OsString>, String> {
+        let executable = std::env::current_exe().map_err(|e| format!("无法定位应用：{e}"))?;
+        let Some(contents) = executable.parent().and_then(Path::parent) else {
+            return Ok(None);
+        };
+        let runtime = contents.join("Resources/ai-runtime");
+        match std::fs::symlink_metadata(&runtime) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(format!("无法读取包内 AI 运行时：{error}")),
+            Ok(_) => {}
+        }
+        let load = || -> Result<std::ffi::OsString, String> {
+            let root = runtime.canonicalize().map_err(|e| e.to_string())?;
+            let manifest: Value = serde_json::from_slice(
+                &std::fs::read(root.join("manifest.json")).map_err(|e| e.to_string())?,
+            ).map_err(|e| e.to_string())?;
+            if manifest.get("schema_version").and_then(Value::as_u64) != Some(1)
+                || manifest.get("platform").and_then(Value::as_str) != Some("macos-arm64")
+            {
+                return Err("不支持的运行时版本或平台".into());
+            }
+            let relative = Path::new(manifest.get("service").and_then(Value::as_str)
+                .ok_or("清单缺少服务路径")?);
+            if relative.as_os_str().is_empty()
+                || relative.components().any(|part| !matches!(part, std::path::Component::Normal(_)))
+            {
+                return Err("服务路径必须位于运行时目录内".into());
+            }
+            let service = root.join(relative).canonicalize().map_err(|e| e.to_string())?;
+            if !service.starts_with(&root) || !service.is_file() {
+                return Err("运行时服务缺失或越出包目录".into());
+            }
+            Ok(service.into_os_string())
+        };
+        load().map(Some).map_err(|e| format!("包内 AI 运行时不可用：{e}"))
+    }
+
     fn bridge_run(
-        python: std::ffi::OsString,
-        bridge: std::ffi::OsString,
+        program: std::ffi::OsString,
+        bridge: Option<std::ffi::OsString>,
         path: &str,
         audio: Option<u64>,
         validation: Option<&str>,
@@ -607,9 +656,9 @@ mod native {
         if cancel.load(Ordering::Relaxed) {
             return Err("任务已取消。".into());
         }
-        let mut command = Command::new(python);
+        let mut command = Command::new(program);
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        if std::env::var_os("APEX_SERVICE_ROOT").is_none() {
+        if bridge.is_some() && std::env::var_os("APEX_SERVICE_ROOT").is_none() {
             let primary = std::fs::read_to_string(root.join(".git"))
                 .ok()
                 .and_then(|v| v.strip_prefix("gitdir: ").map(str::trim).map(PathBuf::from))
@@ -623,8 +672,10 @@ mod native {
                 command.env("APEX_AI_DATA_DIR", primary.join("outputs/apex-ai/model-data"));
             }
         }
+        if let Some(script) = bridge {
+            command.arg(script);
+        }
         command
-            .arg(bridge)
             .arg(if validation.is_some() {
                 "validate"
             } else if audio.is_some() {

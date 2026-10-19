@@ -5,6 +5,7 @@
 #   $DIST/filmcraft-cli-<version>-macos-<arch>.zip      the headless CLI
 #
 # Usage: packaging/macos/package.sh [--arch universal|aarch64|x86_64] [--skip-build]
+#          [--ai-runtime /absolute/path/to/ai-runtime] (arm64 only; external APFS output)
 #
 # Signing (env):
 #   MACOS_SIGN_IDENTITY   codesign identity (name or SHA-1). Default "-" = ad-hoc (local testing;
@@ -13,17 +14,19 @@
 # Notarization (env; all three needed, and a real identity):
 #   APPLE_ID, APPLE_PASSWORD (app-specific password), APPLE_TEAM_ID
 set -euo pipefail
-# shellcheck source=../env.sh
-. "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
-HERE="$ROOT/packaging/macos"
-
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PACKAGE_ROOT="$(cd "$HERE/../.." && pwd)"
+AI_RUNTIME="${FILMCRAFT_AI_RUNTIME:-}"
 ARCH=universal
 SKIP_BUILD=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --arch) ARCH="$2"; shift 2 ;;
+    --arch|--ai-runtime)
+      if [ $# -lt 2 ] || [ -z "$2" ]; then echo "missing value for $1" >&2; exit 2; fi
+      if [ "$1" = --arch ]; then ARCH="$2"; else AI_RUNTIME="$2"; fi
+      shift 2 ;;
     --skip-build) SKIP_BUILD=1; shift ;;
-    -h | --help) sed -n '2,16p' "$0"; exit 0 ;;
+    -h | --help) sed -n '2,17p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -34,7 +37,17 @@ case "$ARCH" in
   *) echo "unknown --arch $ARCH" >&2; exit 2 ;;
 esac
 
-# Keep in sync with LSMinimumSystemVersion in Info.plist.in.
+# Validate AI inputs and external destinations before env.sh creates DIST, any build,
+# destructive WORK cleanup, or lipo. Non-AI packaging keeps its established defaults.
+if [ -n "$AI_RUNTIME" ]; then
+  AI_MIN_VERSION="$(python3 "$HERE/ai-package.py" check --runtime "$AI_RUNTIME" --arch "$ARCH" \
+    --target-dir "${CARGO_TARGET_DIR:-$PACKAGE_ROOT/target}" --dist "${DIST:-$PACKAGE_ROOT/dist/release}")"
+  AI_RUNTIME="$(cd -P "$AI_RUNTIME" && pwd)"
+fi
+# shellcheck source=../env.sh
+. "$HERE/../env.sh"
+
+# Base editor target; AI runtime preflight may raise the final app minimum.
 export MACOSX_DEPLOYMENT_TARGET=11.0
 IDENTITY="${MACOS_SIGN_IDENTITY:--}"
 SHORT_VERSION="${VERSION%%-*}"
@@ -101,21 +114,52 @@ notarize() {
 echo "==> assembling $APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # Executable and icon carry the display name (CFBundleExecutable / CFBundleIconFile).
-cp "$WORK/bin/filmcraft" "$APP/Contents/MacOS/FilmCraft"
+if [ -n "$AI_RUNTIME" ]; then
+  cp "$WORK/bin/filmcraft" "$APP/Contents/MacOS/FilmCraft-core"
+  cp "$HERE/ai-launcher.sh" "$APP/Contents/MacOS/FilmCraft"
+  chmod +x "$APP/Contents/MacOS/FilmCraft"
+  ditto "$AI_RUNTIME" "$APP/Contents/Resources/ai-runtime"
+else
+  cp "$WORK/bin/filmcraft" "$APP/Contents/MacOS/FilmCraft"
+fi
 cp "$ROOT/assets/app-icon/filmcraft.icns" "$APP/Contents/Resources/FilmCraft.icns"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHORT_VERSION@/$SHORT_VERSION/g" \
   -e "s/@BUILD_SHA@/${FILMCRAFT_BUILD_SHA:-unknown}/g" \
   "$HERE/Info.plist.in" >"$APP/Contents/Info.plist"
+if [ -n "$AI_RUNTIME" ]; then
+  # Embedded media/native libraries may require a newer macOS than the editor itself.
+  plutil -replace LSMinimumSystemVersion -string "$AI_MIN_VERSION" "$APP/Contents/Info.plist"
+fi
 plutil -lint "$APP/Contents/Info.plist"
 printf 'APPL????' >"$APP/Contents/PkgInfo"
 # licences of the embedded craft-fonts fonts (builds with CRAFT_FONTS_DIR)
 copy_font_licences "$APP/Contents/Resources"
 
 # Sign inside-out: nested code first, then the bundle itself (no --deep on the final signature).
-# Today the only nested code is the main executable; frameworks/helpers would be signed here too.
+if [ -n "$AI_RUNTIME" ]; then
+  # Do not use --deep to sign: native libraries first, enclosing frameworks next.
+  # Materialize the inventory so an inventory failure cannot be lost in process substitution.
+  python3 "$HERE/ai-package.py" signing-paths "$APP/Contents/Resources/ai-runtime" > "$WORK/ai-signing-paths"
+  while IFS= read -r -d '' nested; do
+    case "$nested" in
+      "$APP/Contents/Resources/ai-runtime/service/filmcraft-ai"|\
+      "$APP/Contents/Resources/ai-runtime/service/_internal/bin/ffmpeg"|\
+      "$APP/Contents/Resources/ai-runtime/service/_internal/bin/ffprobe")
+        sign --options runtime --entitlements "$HERE/ai-runtime-entitlements.plist" "$nested" ;;
+      *) sign --options runtime "$nested" ;;
+    esac
+  done < "$WORK/ai-signing-paths"
+  sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP/Contents/MacOS/FilmCraft-core"
+fi
 sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP/Contents/MacOS/FilmCraft"
 sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP"
 codesign --verify --strict --deep --verbose=2 "$APP"
+if [ -n "$AI_RUNTIME" ]; then
+  # Valid signatures alone do not prove Python/media processes can load libraries.
+  # WORK was verified as external storage before any package work began.
+  mkdir -p "$WORK/ai-signing-smoke"
+  python3 "$HERE/ai-package.py" smoke "$APP/Contents/Resources/ai-runtime" --data "$WORK/ai-signing-smoke"
+fi
 
 if [ "$NOTARIZE" = 1 ]; then
   ditto -c -k --keepParent "$APP" "$WORK/FilmCraft-notarize.zip"
@@ -136,11 +180,16 @@ mkdir -p "$STAGE/.background"
 cp "$HERE/dmg/background.tiff" "$STAGE/.background/background.tiff"
 cp "$HERE/dmg/dmg-layout.DS_Store" "$STAGE/.DS_Store"
 rm -f "$DMG" "$WORK/raw.dmg"
-# makehybrid + convert builds the image without attaching a device, unlike `create -srcfolder`,
-# which is flaky on CI runners ("Resource busy") and hangs in sandboxed sessions.
-# The volume name has no version: .DS_Store finds the background through an alias that includes it.
-hdiutil makehybrid -hfs -hfs-volume-name "FilmCraft" -hfs-openfolder "$STAGE" -o "$WORK/raw.dmg" "$STAGE"
-hdiutil convert "$WORK/raw.dmg" -format UDZO -imagekey zlib-level=9 -o "$DMG"
+if [ -n "$AI_RUNTIME" ]; then
+  # HFS makehybrid injects FinderInfo into native resources, breaking strict app
+  # signatures in the final image. APFS preserves them; verify after read-only mount.
+  python3 "$HERE/ai-package.py" image --stage "$STAGE" --output "$DMG"
+else
+  # Existing non-AI CI flow avoids attaching a device during image creation.
+  # The volume name has no version: .DS_Store's background alias includes it.
+  hdiutil makehybrid -hfs -hfs-volume-name "FilmCraft" -hfs-openfolder "$STAGE" -o "$WORK/raw.dmg" "$STAGE"
+  hdiutil convert "$WORK/raw.dmg" -format UDZO -imagekey zlib-level=9 -o "$DMG"
+fi
 rm -f "$WORK/raw.dmg"
 sign "$DMG"
 codesign --verify --strict --verbose=2 "$DMG"
