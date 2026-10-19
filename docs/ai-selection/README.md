@@ -11,6 +11,7 @@
 | 开发与验收 | [12 张工单](tickets/README.md)、[GitHub 编号及依赖](tickets/published.md) |
 | 避免重复开发 | [原生能力复用](reviews/native-capability-audit.md)、[原型缺口](reviews/prototype-compatibility.md) |
 | 接共享 Python 引擎 | [AI 接入入口](../../integrations/apex-ai/README.md) |
+| 独立应用与后端打包 | [规格及本地工单](standalone-runtime.md)、[交付验收](implementation/standalone-runtime.md) |
 | 理解迁移前实现 | [原生接入基线](integration-baseline.md)、[参考补丁](../../integrations/apex-ai/reference/apex-ai.patch) |
 
 网页原型使用演示识别数据和静音预览。旧原生基线提供历史实现与验证，不代表新底座已经接入。工单远端仍在 Apex；共享模型核心继续从外部复用。

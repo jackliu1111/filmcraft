@@ -1,5 +1,7 @@
 # AI 选片实现与验收
 
+2026-10-18 新增：[独立 AI 运行时、macOS 安装包与搬迁验收](standalone-runtime.md)。该轮使用独立集成分支，不改变下列原 AI 选片工单的人工验收状态。
+
 2026-10-16。集成分支：`codex/ai-selection-integration`。方案以 [Q1–Q19](../design/recognition-workspace.md) 为准，工单仍在 [Apex #21–#32](../tickets/published.md)。
 
 ## 用户已确认的测试接口

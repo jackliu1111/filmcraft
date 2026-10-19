@@ -1,5 +1,8 @@
 # Package the macOS arm64 AI application
 
+The current local delivery, final image hashes and real inference/native acceptance
+are recorded in [standalone runtime acceptance](../../docs/ai-selection/implementation/standalone-runtime.md).
+
 Build the frozen runtime with [the runtime command](../ai/README.md), then use
 native arm64 FilmCraft and CLI release binaries:
 

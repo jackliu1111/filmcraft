@@ -1,10 +1,16 @@
 # Apex AI 接入：FilmCraft 工作目录入口
 
-2026-10-16。本目录提供当前共享分析引擎入口及迁移前参考资料。原生接入、选片与恢复实现和验收见[当前记录](../../docs/ai-selection/implementation/README.md)。
+2026-10-18。本目录提供当前共享分析引擎入口及迁移前参考资料。原生接入、选片与恢复实现和验收见[当前记录](../../docs/ai-selection/implementation/README.md)。
+
+## 独立应用
+
+macOS arm64 独立包携带冻结的 Python、固定提交的共享后端、模型代码与权重、FFmpeg/ffprobe。正常运行不需要源码目录、虚拟环境或 Homebrew。首次启动选择外接 APFS/HFS 数据目录，缓存和临时文件写到该目录；可使用外接盘上的 APFS 磁盘映像。包内资源保持只读，损坏或不兼容环境明确报错。当前实际交付要求 macOS 27.0，使用本机 ad-hoc 签名。
+
+构建命令及来源记录见[冻结运行时](../../packaging/ai/README.md)、[macOS 打包](../../packaging/macos/README-ai.md)；独立包真实搬迁、推理和原生验收见[交付记录](../../docs/ai-selection/implementation/standalone-runtime.md)。以下部分继续说明源码开发入口，开发环境覆盖保持可用。
 
 ## 共享引擎
 
-Python 模型核心仍在外部 Apex 仓库，不复制第二份到 FilmCraft。本地默认使用相邻的 `../apex-fps-mvp`，也可以设置 `APEX_SERVICE_ROOT`。入口通过环境和相对仓库位置解析，不依赖启动时的当前目录。
+Python 模型核心源码仍在外部 Apex 仓库维护；独立包构建时复制固定版本，不在 FilmCraft 维护另一套算法。源码开发默认使用相邻的 `../apex-fps-mvp`，也可以设置 `APEX_SERVICE_ROOT`。入口通过环境和相对仓库位置解析，不依赖启动时的当前目录。
 
 [backend.json](backend.json)记录参考仓库和提交。当前是开发工作区接入，调用实际检出的代码；修改后端后应记录新提交，不能把该记录误当作已经安装的固定版本包。
 
