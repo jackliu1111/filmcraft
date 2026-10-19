@@ -15,6 +15,20 @@ LAUNCHER = ROOT / 'packaging/macos/ai-launcher.sh'
 
 
 class PackageTests(unittest.TestCase):
+    def test_image_rejects_local_output_before_creating_an_artifact(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            stage = root / 'stage'
+            (stage / 'FilmCraft.app').mkdir(parents=True)
+            output = root / 'local.dmg'
+            result = subprocess.run([sys.executable, str(ROOT / 'packaging/macos/ai-package.py'),
+                                     'image', '--stage', str(stage), '--output', str(output)],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('external APFS', result.stderr)
+            self.assertFalse(output.exists())
+            self.assertEqual([], list(stage.joinpath('FilmCraft.app').iterdir()))
+
     def test_signed_runtime_smoke_checks_bundled_media_loaders_before_distribution(self):
         for broken in ('ffmpeg', 'ffprobe', None):
             with self.subTest(broken=broken), tempfile.TemporaryDirectory() as temp:

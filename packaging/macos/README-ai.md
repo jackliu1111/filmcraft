@@ -55,7 +55,12 @@ mounted. After creating the compressed DMG, packaging attaches that final image
 read-only, verifies its `FilmCraft.app` with `codesign --verify --strict --deep`,
 and detaches it even when verification fails. A failed final-image check stops
 distribution. hdiutil temporary copies use the already verified external output
-directory. Non-AI packaging retains its existing CI image creation flow.
+directory. The public `ai-package.py image` command independently checks that its
+existing output parent is on a physically verified external APFS volume, is
+writable, and has estimated room for APFS overhead, temporary copies and the
+compressed image before invoking hdiutil. Output must be a new absolute `.dmg`
+path outside the source stage. Non-AI packaging retains its existing CI image
+creation flow.
 
 On first launch from Finder, choose an existing folder on a mounted external
 APFS or HFS (Mac OS Extended) volume for AI data. An APFS disk image backed by

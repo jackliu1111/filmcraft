@@ -90,16 +90,21 @@ def inspect_runtime(root):
     return {'minimum_system_version': minimum, 'native_file_count': count}
 
 
+def runtime_build_tools():
+    source = Path(__file__).resolve().parents[1] / 'ai/build_runtime.py'
+    spec = importlib.util.spec_from_file_location('filmcraft_runtime_build', source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def preflight(args):
     # Reject unsupported architectures before invoking build, lipo, or removing old output.
     if args.arch != 'aarch64':
         raise ValueError('AI runtime supports only --arch aarch64; x86_64/universal are unsupported')
     root = resources(args.runtime)
     deployment = inspect_runtime(root)
-    source = Path(__file__).resolve().parents[1] / 'ai/build_runtime.py'
-    spec = importlib.util.spec_from_file_location('filmcraft_runtime_build', source)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = runtime_build_tools()
     size = sum(path.stat().st_size for path in root.rglob('*') if path.is_file() and not path.is_symlink())
     # Work app, DMG staging, image conversion and final archive can coexist.
     native_bytes = sum(path.stat().st_size for name in ('filmcraft', 'filmcraft-cli')
@@ -126,10 +131,22 @@ def create_image(stage, output):
     """Preserve signed resources, then verify the app from the read-only image."""
     if not stage.is_dir() or not (stage / 'FilmCraft.app').is_dir():
         raise ValueError('DMG stage must contain FilmCraft.app')
-    if not output.is_absolute() or output.suffix != '.dmg' or output.exists():
+    if not output.is_absolute() or output.suffix != '.dmg' or output.exists() or output.is_symlink():
         raise ValueError('DMG output must be a new absolute .dmg path')
-    # package preflight has verified external output storage. Keep hdiutil's
-    # temporary copies beside that output, including its potentially large image.
+    stage = stage.resolve()
+    parent = output.parent.resolve()
+    if not parent.is_dir():
+        raise ValueError('DMG output parent must already exist')
+    output = parent / output.name
+    if output.is_relative_to(stage):
+        raise ValueError('DMG output cannot overlap its source stage')
+    # This command is also public: verify storage independently of package.sh.
+    runtime_build_tools().external_storage(parent)
+    size = sum(path.stat().st_size for path in stage.rglob('*') if path.is_file() and not path.is_symlink())
+    minimum = 1024**3 + size * 3  # APFS overhead, temporary copies and compressed image.
+    if not os.access(parent, os.W_OK) or shutil.disk_usage(parent).free < minimum:
+        raise ValueError(f'DMG creation needs writable external APFS storage and {minimum} free bytes: {parent}')
+    # Keep hdiutil temporary copies beside the verified external output.
     environment = os.environ | {'TMPDIR': str(output.parent)}
     subprocess.run(['/usr/bin/hdiutil', 'create', '-srcfolder', str(stage),
                     '-fs', 'APFS', '-volname', 'FilmCraft', '-format', 'UDZO',
