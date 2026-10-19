@@ -1,6 +1,7 @@
 """Public packaging/launch contracts, using tiny OS-process boundary fixtures."""
 import json
 import os
+import plistlib
 import shutil
 import sys
 from pathlib import Path
@@ -105,6 +106,40 @@ class RuntimeInspectionTests(unittest.TestCase):
                                      'inspect', str(runtime)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)['minimum_system_version'], '27.0')
+
+
+@unittest.skipUnless(sys.platform == 'darwin' and os.environ.get('FILMCRAFT_AI_TEST_VOLUME'),
+                     'requires an explicitly configured external APFS test volume')
+class DmgImageTests(unittest.TestCase):
+    def test_image_preserves_signed_app_and_rejects_invalid_final_resources(self):
+        with tempfile.TemporaryDirectory(dir=os.environ['FILMCRAFT_AI_TEST_VOLUME']) as temp:
+            root = Path(temp)
+            stage = root / 'stage'
+            app = stage / 'FilmCraft.app'
+            binary = app / 'Contents/MacOS/FilmCraft'
+            binary.parent.mkdir(parents=True)
+            (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+                'CFBundleExecutable': 'FilmCraft', 'CFBundleIdentifier': 'test.filmcraft.dmg',
+                'CFBundleName': 'FilmCraft', 'CFBundlePackageType': 'APPL', 'CFBundleVersion': '1'}))
+            source = root / 'main.c'
+            source.write_text('int main(void) { return 0; }\n')
+            subprocess.run(['/usr/bin/clang', '-arch', 'arm64', str(source), '-o', str(binary)],
+                           check=True, capture_output=True)
+            subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', str(app)],
+                           check=True, capture_output=True)
+            subprocess.run(['/usr/bin/codesign', '--verify', '--strict', '--deep', str(app)],
+                           check=True, capture_output=True)
+            command = [sys.executable, str(ROOT / 'packaging/macos/ai-package.py'),
+                       'image', '--stage', str(stage), '--output']
+            result = subprocess.run(command + [str(root / 'valid.dmg')], capture_output=True, text=True, timeout=120)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue((root / 'valid.dmg').is_file())
+            resources = app / 'Contents/Resources'
+            resources.mkdir()
+            (resources / 'unsigned.txt').write_text('changed after signing')
+            result = subprocess.run(command + [str(root / 'invalid.dmg')], capture_output=True, text=True, timeout=120)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('sealed resource', result.stderr)
 
 
 class LauncherTests(unittest.TestCase):

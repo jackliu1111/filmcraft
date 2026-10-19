@@ -180,11 +180,16 @@ mkdir -p "$STAGE/.background"
 cp "$HERE/dmg/background.tiff" "$STAGE/.background/background.tiff"
 cp "$HERE/dmg/dmg-layout.DS_Store" "$STAGE/.DS_Store"
 rm -f "$DMG" "$WORK/raw.dmg"
-# makehybrid + convert builds the image without attaching a device, unlike `create -srcfolder`,
-# which is flaky on CI runners ("Resource busy") and hangs in sandboxed sessions.
-# The volume name has no version: .DS_Store finds the background through an alias that includes it.
-hdiutil makehybrid -hfs -hfs-volume-name "FilmCraft" -hfs-openfolder "$STAGE" -o "$WORK/raw.dmg" "$STAGE"
-hdiutil convert "$WORK/raw.dmg" -format UDZO -imagekey zlib-level=9 -o "$DMG"
+if [ -n "$AI_RUNTIME" ]; then
+  # HFS makehybrid injects FinderInfo into native resources, breaking strict app
+  # signatures in the final image. APFS preserves them; verify after read-only mount.
+  python3 "$HERE/ai-package.py" image --stage "$STAGE" --output "$DMG"
+else
+  # Existing non-AI CI flow avoids attaching a device during image creation.
+  # The volume name has no version: .DS_Store's background alias includes it.
+  hdiutil makehybrid -hfs -hfs-volume-name "FilmCraft" -hfs-openfolder "$STAGE" -o "$WORK/raw.dmg" "$STAGE"
+  hdiutil convert "$WORK/raw.dmg" -format UDZO -imagekey zlib-level=9 -o "$DMG"
+fi
 rm -f "$WORK/raw.dmg"
 sign "$DMG"
 codesign --verify --strict --verbose=2 "$DMG"
