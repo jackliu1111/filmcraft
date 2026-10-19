@@ -17,4 +17,4 @@
 3. [交接与运行](docs/ai-selection/handoff.md)：新目录下启动网页原型、配置后端及检查接入。
 4. [复用范围](docs/ai-selection/reviews/native-capability-audit.md)：已有原生操作优先复用；该记录基于旧版本，按需核对新底座差异。
 
-原 AI 选片集成 PR [FilmCraft #1](https://github.com/jackliu1111/filmcraft/pull/1)已合并。本轮独立包仅在本地集成，远端发布尚未获自动审批允许。用户暂无真实游戏声／麦克风分轨录像；受控双轨机制通过不等于该真实素材验收。权重、完整录像、模型数据和本地构建产物不随源码上传。
+原 AI 选片集成 PR [FilmCraft #1](https://github.com/jackliu1111/filmcraft/pull/1)已合并。本轮独立运行与后端打包已按用户授权提交为 [FilmCraft #2](https://github.com/jackliu1111/filmcraft/pull/2)，等待审阅。用户暂无真实游戏声／麦克风分轨录像；受控双轨机制通过不等于该真实素材验收。权重、完整录像、模型数据和本地构建产物不随源码上传。
