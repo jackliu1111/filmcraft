@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import plistlib
 import re
 import shutil
 import subprocess
@@ -121,6 +122,37 @@ def preflight(args):
     print(deployment['minimum_system_version'])
 
 
+def create_image(stage, output):
+    """Preserve signed resources, then verify the app from the read-only image."""
+    if not stage.is_dir() or not (stage / 'FilmCraft.app').is_dir():
+        raise ValueError('DMG stage must contain FilmCraft.app')
+    if not output.is_absolute() or output.suffix != '.dmg' or output.exists():
+        raise ValueError('DMG output must be a new absolute .dmg path')
+    # package preflight has verified external output storage. Keep hdiutil's
+    # temporary copies beside that output, including its potentially large image.
+    environment = os.environ | {'TMPDIR': str(output.parent)}
+    subprocess.run(['/usr/bin/hdiutil', 'create', '-srcfolder', str(stage),
+                    '-fs', 'APFS', '-volname', 'FilmCraft', '-format', 'UDZO',
+                    '-imagekey', 'zlib-level=9', str(output)],
+                   env=environment, check=True, timeout=1800)
+    attached = plistlib.loads(subprocess.check_output([
+        '/usr/bin/hdiutil', 'attach', '-readonly', '-nobrowse', '-plist', str(output)],
+        env=environment, timeout=120))
+    entities = attached.get('system-entities', [])
+    device = next((entity['dev-entry'] for entity in entities if 'dev-entry' in entity), None)
+    try:
+        apps = [Path(entity['mount-point']) / 'FilmCraft.app'
+                for entity in entities if 'mount-point' in entity]
+        apps = [app for app in apps if app.is_dir()]
+        if len(apps) != 1 or device is None:
+            raise ValueError('Final read-only DMG must contain exactly one mounted FilmCraft.app')
+        subprocess.run(['/usr/bin/codesign', '--verify', '--strict', '--deep',
+                        '--verbose=2', str(apps[0])], check=True, timeout=120)
+    finally:
+        if device:
+            subprocess.run(['/usr/bin/hdiutil', 'detach', device], check=True, timeout=120)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
@@ -137,12 +169,17 @@ def main():
     smoke.add_argument('runtime', type=Path)
     smoke.add_argument('--data', type=Path, required=True,
                        help='Existing external data directory for the startup check')
+    image = sub.add_parser('image', help='Create an APFS DMG and verify its read-only mounted app')
+    image.add_argument('--stage', type=Path, required=True)
+    image.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     try:
         if args.command == 'check':
             preflight(args)
         elif args.command == 'inspect':
             print(json.dumps(inspect_runtime(args.runtime)))
+        elif args.command == 'image':
+            create_image(args.stage, args.output)
         elif args.command == 'smoke':
             for relative, argument in (('service/filmcraft-ai', '--check-runtime'),
                                        ('service/_internal/bin/ffmpeg', '-version'),
